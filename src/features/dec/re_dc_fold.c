@@ -71,6 +71,17 @@ static bool find_sp(re_ir_func_t *f, uint16_t *sp) {
     return false;
 }
 
+// rax, rcx, rdx and r8-r11 do not survive a call. rbx, rbp, rsi, rdi and r12-r15 do.
+static bool volatile_reg(re_varnode_t v) {
+    if (v.space != RE_SPACE_REG)
+        return false;
+    if (v.offset == 3 || v.offset == 5 || v.offset == 6 || v.offset == 7)
+        return false;
+    if (v.offset >= 12 && v.offset <= 15)
+        return false;
+    return v.offset != 4;
+}
+
 static void kill_sp(re_ir_func_t *f, uint16_t sp) {
     size_t n = 0, i;
     at(f, 0, &n);
@@ -82,10 +93,9 @@ static void kill_sp(re_ir_func_t *f, uint16_t sp) {
         else if (op->in[2].space == RE_SPACE_FLAG && op->out.space == RE_SPACE_REG &&
                  op->out.offset == sp)
             nop(op);
-        else if ((op->op == RE_OP_STORE || op->op == RE_OP_LOAD) &&
-                 op->in[2].space == RE_SPACE_REG && op->in[2].offset == sp)
-            nop(op);
-        else if (op->op == RE_OP_LOAD && op->in[0].space == RE_SPACE_REG && op->in[0].offset == sp)
+        else if (op->op == RE_OP_STORE && op->in[2].space == RE_SPACE_REG &&
+                 op->in[2].offset == sp && op->in[1].space == RE_SPACE_REG &&
+                 !volatile_reg(op->in[1]))
             nop(op);
     }
 }
@@ -99,7 +109,8 @@ static void kill_saves(re_ir_func_t *f) {
     for (i = 0; i < n; i++) {
         re_ir_op_t *op = at(f, i, &n);
         bool loaded = false;
-        if (op->op == RE_OP_STORE && op->in[2].space == RE_SPACE_STACK) {
+        if (op->op == RE_OP_STORE && op->in[2].space == RE_SPACE_STACK &&
+            op->in[1].space == RE_SPACE_REG && !volatile_reg(op->in[1])) {
             for (j = i + 1; j < n; j++) {
                 if (at(f, j, &n)->op == RE_OP_LOAD && same(at(f, j, &n)->in[0], op->in[2]))
                     loaded = true;
@@ -139,6 +150,53 @@ static re_varnode_t src_of(re_ir_func_t *f, re_varnode_t v) {
     return v;
 }
 
+// A flag restore and a write to rsp itself are frame arithmetic, not a value.
+// An add of rsp that writes a temporary is an address. Substituting rsp for that
+// temporary is what deleted mov [rsp+0x30], rax.
+static bool flag_in(const re_ir_op_t *op) {
+    unsigned k;
+    for (k = 0; k < 4; k++)
+        if (op->in[k].space == RE_SPACE_FLAG)
+            return true;
+    return false;
+}
+
+static void kill_shadow(re_ir_func_t *f) {
+    size_t n = 0, i;
+    re_varnode_t rsp = re_ir_vn(RE_SPACE_REG, 8, 4);
+    at(f, 0, &n);
+    for (i = 0; i < n; i++) {
+        re_ir_op_t *op = at(f, i, &n);
+        bool arith = op->op == RE_OP_INTADD || op->op == RE_OP_INTSUB;
+        if (!arith)
+            continue;
+        if (flag_in(op) || same(op->out, rsp))
+            nop(op);
+    }
+}
+
+static bool call_between(re_ir_func_t *f, size_t from, size_t to) {
+    size_t n = 0, j;
+    at(f, 0, &n);
+    for (j = from + 1; j < to && j < n; j++) {
+        uint16_t k = at(f, j, &n)->op;
+        if (k == RE_OP_CALL || k == RE_OP_CALLIND)
+            return true;
+    }
+    return false;
+}
+
+static bool reg_written(re_ir_func_t *f, size_t from, size_t to, uint16_t reg) {
+    size_t n = 0, j;
+    at(f, 0, &n);
+    for (j = from + 1; j < to && j < n; j++) {
+        re_ir_op_t *op = at(f, j, &n);
+        if (op->op != RE_OP_NOP && op->out.space == RE_SPACE_REG && op->out.offset == reg)
+            return true;
+    }
+    return false;
+}
+
 static void propagate(re_ir_func_t *f) {
     size_t n = 0, i, j;
     at(f, 0, &n);
@@ -150,8 +208,11 @@ static void propagate(re_ir_func_t *f) {
         if (def->in[0].space != RE_SPACE_REG)
             continue;
         to = src_of(f, def->in[0]);
-        for (j = i + 1; j < n; j++)
+        for (j = i + 1; j < n; j++) {
+            if (volatile_reg(def->out) && call_between(f, i, j))
+                break;
             subst_in(at(f, j, &n), def->out, to);
+        }
         def->in[0] = to;
         def->extra |= RE_FOLD_ALIAS;
     }
@@ -185,7 +246,8 @@ static void calls(re_ir_func_t *f) {
         return;
     for (i = last + 1; i < n; i++) {
         re_ir_op_t *op = at(f, i, &n);
-        if (op->op == RE_OP_RETURN && same(op->in[0], at(f, last, &n)->out)) {
+        if (op->op == RE_OP_RETURN && same(op->in[0], at(f, last, &n)->out) &&
+            !reg_written(f, last, i, op->in[0].offset)) {
             at(f, last, &n)->extra = RE_FOLD_SKIP;
             op->extra |= RE_FOLD_STMT;
             op->const_val = at(f, last, &n)->const_val;
@@ -236,6 +298,7 @@ void re_dc_fold(re_ir_func_t *f) {
     uint16_t sp = 0;
     if (!f || !f->n_blocks)
         return;
+    kill_shadow(f);
     if (find_sp(f, &sp))
         kill_sp(f, sp);
     kill_saves(f);

@@ -18,11 +18,17 @@ extern "C" {
 #include "features/dec/re_ir.h"
 #include "features/flow/re_flow.h"
 #include "features/meta/re_disasm.h"
+#include "utils/mem/re_vec.h"
 #include "utils/text/re_strbuf.h"
 
 #define RE_DC_REGS 32  // x86-64 general purpose registers, indexed by re_varnode_t.offset
 #define RE_DC_TEXT 48  // width of a rendered operand, which is a short name or a literal
 #define RE_DC_VARS 512 // temporaries per function, matching the IR's own bound
+
+typedef struct {
+    uint32_t line; // 1-based statement index, the order the body printed
+    uint64_t va;   // the instruction that lowered to this statement
+} re_dc_site_t;
 
 typedef struct {
     re_strbuf_t *o;
@@ -44,6 +50,8 @@ typedef struct {
     uint32_t next_tmp;
     size_t n_stmts;
     size_t n_unknown;
+    uint64_t map_va; // instruction the next statement came from
+    re_vec_t *sites; // re_dc_site_t, one per printed statement
     const re_disasm_t *dis;
     const re_vec_t *jtables;
     const re_code_t *code;

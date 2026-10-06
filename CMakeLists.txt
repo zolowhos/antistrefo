@@ -96,6 +96,7 @@ src/cli/app/main.cpp
     src/cli/screen/re_term.c
     src/cli/screen/re_gui_model.c
     src/cli/screen/re_gui.c
+    src/cli/screen/re_gui_menu.c
     src/mcp/re_mcp.cpp
     src/mcp/re_mcp_tools.cpp)
 target_link_libraries(antistrefo PRIVATE re_core re_flags)

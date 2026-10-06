@@ -17,6 +17,7 @@
 #include "utils/tui/re_ui.h"
 #include "cli/screen/re_draw.h"
 #include "cli/screen/re_focus.h"
+#include "cli/screen/re_gui_menu.h"
 #include "cli/screen/re_gui_model.h"
 #include "cli/screen/re_input.h"
 #include "cli/screen/re_pseudocode.h"
@@ -25,8 +26,6 @@
 #include <stdio.h>
 #include <string.h>
 
-// The pages on the body's top edge. The list of functions stays on the left for all
-// of them; the right pane is what changes.
 #define RE_PAGE_COUNT 6u
 
 typedef struct gui gui_t;
@@ -63,19 +62,20 @@ typedef struct gui {
     re_vset_t classes;
     page_arg_t page_arg[RE_PAGE_COUNT];
     re_ui_t ui;
-    // Remade on every load. A mapped binary lives in it, and the path is copied so the
-    // title still names the file after that arena is freed.
+    int menu_open;
+    uint8_t menu_zone;
+    uint8_t menu_n;
+    bool syntax;
+    bool color;
+    char note[80];
     re_arena_t fana;
     char path[512];
-    // The right pane's lines for this turn. Compose draws them and does not fill them.
     const char **body;
     const uint8_t *body_marks;
     size_t body_n;
     uint32_t body_base;
 } gui_t;
 
-// Built once per selected function. Doing it every frame would lower the same body
-// again and again for the same text.
 typedef struct {
     re_strbuf_t buf;
     const char *line[RE_PSEUDO_MAX];
@@ -117,9 +117,6 @@ static void pseudo_fill(pseudo_t *ps, re_arena_t *a, re_analysis_t *an, size_t s
         re_decompile_func(&d, f, &st, &ps->buf);
     pseudo_split(ps);
     if (!ps->n) {
-        // The two slashes are written as a slash and a hex byte. A "//" inside a
-        // string is eaten by the gate's comment stripper, and the function that
-        // follows is then measured as part of this one.
         ps->line[0] = "/\x2f this body did not lower: no instruction was recovered from it";
         ps->mark[0] = 1;
         ps->n = 1;
@@ -208,7 +205,7 @@ static void compose(re_screen_t *s, gui_t *g, const re_gui_funcs_t *l) {
     L.n_code = g->body_n;
     L.base_line = g->body_base;
     L.marks = g->body_marks;
-    L.syntax = g->tab == 1;
+    L.syntax = g->tab == 1 && g->syntax;
     re_layout_compose(s, &L);
     g->button_zone = L.button_zone;
     g->open_zone = L.open_zone;
@@ -321,10 +318,6 @@ static void on_page(void *user) {
     a->g->repaint = true;
 }
 
-static void on_menu(void *user) {
-    (void)user;
-}
-
 static void on_row(void *user) {
     page_arg_t *a = user;
     if (!a || !a->g)
@@ -336,9 +329,6 @@ static void bind_actions(gui_t *g) {
     re_ui_clear(&g->ui);
     re_ui_bind(&g->ui, g->button_zone, on_load, NULL, g);
     re_ui_bind(&g->ui, g->open_zone, on_load, NULL, g);
-    if (g->open_zone != RE_SCREEN_ZONE_NONE)
-        for (size_t i = 1; i < 6u; i++)
-            re_ui_bind(&g->ui, (uint8_t)(g->open_zone + i), on_menu, NULL, g);
     for (size_t i = 0; i < g->tabs_drawn && i < RE_PAGE_COUNT; i++) {
         g->page_arg[i].g = g;
         g->page_arg[i].index = i;
@@ -375,22 +365,36 @@ static void feed_pointer(gui_t *g, re_screen_t *frame, const re_ev_t *ev) {
     re_ui_pointer(&g->ui, frame, ev->row, ev->col, RE_UI_DOWN);
 }
 
-// One turn of the loop: compose, paint, wait. Returns false to leave.
 static bool turn(gui_t *g, re_arena_t *a, re_screen_t *frame, re_gui_funcs_t *list,
                  re_gui_listing_t *ls, pseudo_t *ps) {
     if (list->n && g->sel >= list->n)
         g->sel = list->n - 1u;
-    // The list takes every row the body has, so a taller terminal shows more functions
-    // rather than a fixed slice of them with blank rows under it.
     re_gui_funcs_fit(list, re_layout_body_rows(frame->rows));
     body_for(g, a, ls, ps, g->sel, frame->rows);
     compose(frame, g, list);
-    bind_actions(g);
-    // Color is off until a caller asks. The button backgrounds are the ask.
-    frame->tui.color = re_tui_want_color();
+    {
+        re_gui_menu_ctx_t mc = {0};
+        mc.sel = &g->sel;
+        mc.nfunc = list->n;
+        mc.tab = &g->tab;
+        mc.ntab = RE_PAGE_COUNT;
+        mc.page_off = &g->page_off;
+        mc.repaint = &g->repaint;
+        mc.quit = &g->quit;
+        mc.syntax = &g->syntax;
+        mc.color = &g->color;
+        mc.open = &g->menu_open;
+        mc.bar = g->open_zone;
+        mc.zone = &g->menu_zone;
+        mc.nitems = &g->menu_n;
+        mc.note = g->note;
+        mc.note_n = sizeof(g->note);
+        re_gui_menu_draw(frame, &mc);
+        bind_actions(g);
+        re_gui_menu_bind(&g->ui, &mc);
+    }
+    frame->tui.color = g->color && re_tui_want_color();
     re_ui_mark(&g->ui, frame, (uint8_t)RE_ST_HOVER, (uint8_t)RE_ST_PRESS);
-    // A page change clears the console and writes every cell. A diff leaves the
-    // previous page in any cell the new page does not overwrite.
     if (g->repaint || !g->draw.valid)
         re_draw_full(&g->draw, frame);
     else
@@ -403,8 +407,6 @@ static bool turn(gui_t *g, re_arena_t *a, re_screen_t *frame, re_gui_funcs_t *li
 
     re_ev_t ev;
     if (!re_term_wait(&g->term, &ev, 250u)) {
-        // No key. Ask the terminal for its size anyway, because a resize is not always
-        // an event on every terminal, and a stale frame size wraps every row.
         uint16_t nr = 0, nc = 0;
         re_term_size(&nr, &nc);
         if (nr != frame->rows || nc != frame->cols)
@@ -427,13 +429,6 @@ static bool turn(gui_t *g, re_arena_t *a, re_screen_t *frame, re_gui_funcs_t *li
 bool re_gui_wants_file(const char *arg) {
     if (!arg || !*arg)
         return false;
-    // Something readable is there, not something with a known extension. A dropped
-    // binary may be named anything, and refusing one over its extension would be
-    // refusing the only thing the reader asked for.
-    //
-    // The file is read and thrown away, so opening it again costs one more read. That
-    // is cheaper than a wrong answer: without a check, a mistyped command would open
-    // this instead of saying the command does not exist.
     re_arena_t a;
     re_arena_init(&a, 0);
     re_file_t f;
@@ -449,6 +444,9 @@ int re_cmd_gui(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     gui_t g;
     memset(&g, 0, sizeof(g));
     re_ui_init(&g.ui);
+    g.menu_open = -1;
+    g.syntax = true;
+    g.color = true;
     re_arena_t arena;
     re_arena_init(&arena, 1u << 23);
     re_gui_funcs_t list;
@@ -458,17 +456,11 @@ int re_cmd_gui(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     pseudo_t ps;
     memset(&ps, 0, sizeof(ps));
 
-    // The terminal is taken before the file is analysed. The other order puts a full
-    // screen session up and then prints a failure into it, which leaves the reader with
-    // escape sequences and no way back.
     if (!re_term_open(&g.term, true)) {
         fprintf(stderr, "gui needs a terminal on both ends; try the report commands\n");
         re_arena_free(&arena);
         return 2;
     }
-    // A named file is loaded now. Without one the first screen is the welcome, which is
-    // what opening the binary by double clicking it should produce, so this is not a
-    // different code path: it is the same one with nothing to load yet.
     bool ready = !*path || load_file(&g, &arena, &list, &ps, path);
     uint16_t rows = 24, cols = 80;
     re_term_size(&rows, &cols);
@@ -483,8 +475,6 @@ int re_cmd_gui(re_ctx_t *ctx, const char *path, int argc, char **argv) {
                 g.want_load = false;
                 if (re_term_pick_file(typed, sizeof(typed)))
                     load_file(&g, &arena, &list, &ps, typed);
-                // The dialog covers the console. The diff still believes the old frame
-                // is showing, so the next paint has to be a full one.
                 g.draw.valid = false;
             }
         }

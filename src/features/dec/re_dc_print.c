@@ -49,6 +49,7 @@ void re_dc_learn_widths(re_dc_emit_t *e, const re_ir_func_t *ir) {
         const re_ir_block_t *blk = &ir->blocks[bi];
         for (size_t k = 0; k < blk->n_ops; k++) {
             const re_ir_op_t *op = &blk->ops[k];
+            unsigned a;
             if (op->op == RE_OP_LOAD) {
                 if (op->in[0].space == RE_SPACE_STACK)
                     sw_learn(e, (int16_t)op->in[0].offset, op->out.size);
@@ -56,6 +57,9 @@ void re_dc_learn_widths(re_dc_emit_t *e, const re_ir_func_t *ir) {
                 if (op->in[2].space == RE_SPACE_STACK)
                     sw_learn(e, (int16_t)op->in[2].offset, op->in[0].size);
             }
+            for (a = 0; a < 4; a++)
+                if (op->in[a].space == RE_SPACE_STACK)
+                    sw_learn(e, (int16_t)op->in[a].offset, op->in[a].size ? op->in[a].size : 8);
         }
     }
 }
@@ -188,6 +192,15 @@ static void put_indent(re_dc_emit_t *e) {
         re_strbuf_puts(e->o, "    ");
 }
 
+static void note_site(re_dc_emit_t *e) {
+    re_dc_site_t s;
+    if (!e->sites || !e->map_va)
+        return;
+    s.line = (uint32_t)(e->n_stmts + 1);
+    s.va = e->map_va;
+    RE_VEC_PUSH(e->sites, e->a, s);
+}
+
 void re_dc_stmt(re_dc_emit_t *e, const char *fmt, ...) {
     va_list ap;
     if (e->n_stmts && e->n_stmts % 6 == 0)
@@ -200,6 +213,13 @@ void re_dc_stmt(re_dc_emit_t *e, const char *fmt, ...) {
         re_strbuf_puts(e->o, buf);
     }
     va_end(ap);
+    if (e->map_va)
+        re_strbuf_puts(e->o, " /* @");
+    if (e->map_va)
+        re_strbuf_put_hex64(e->o, e->map_va, 16);
+    if (e->map_va)
+        re_strbuf_puts(e->o, " */");
+    note_site(e);
     re_strbuf_puts(e->o, ";\n");
     e->n_stmts++;
 }
@@ -214,6 +234,7 @@ void re_dc_line(re_dc_emit_t *e, const char *fmt, ...) {
         re_strbuf_puts(e->o, buf);
     }
     va_end(ap);
+    note_site(e);
     re_strbuf_puts(e->o, "\n");
     e->n_stmts++;
 }

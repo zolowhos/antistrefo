@@ -66,6 +66,7 @@ static void emit_call(re_dc_emit_t *e, const re_ir_op_t *op) {
     }
     if (op->extra & RE_FOLD_STMT) {
         re_dc_stmt(e, "sub_%llx(%s)", (unsigned long long)op->const_val, args.p ? args.p : "");
+        re_dc_bind(e, op->out, name);
         return;
     }
     if (xr && xr->name.p && xr->name.n) {
@@ -452,12 +453,12 @@ static void print_body(re_dc_emit_t *e, const re_dc_walk_t *w, const re_ir_func_
         }
         for (size_t j = 0; j < produced[i] && k < ops_so_far(ir); j++, k++) {
             const re_ir_op_t *op = ops_from(ir, k);
+            e->map_va = in->addr;
             if (op)
                 emit_op(e, op, w);
         }
     }
 }
-
 bool re_decompile_ok(const re_decomp_t *d, const re_func_t *f) {
     re_dc_walk_t w = {0};
     if (!d || !f || !d->code || !d->arena)
@@ -481,6 +482,7 @@ void re_decompile_func(const re_decomp_t *d, const re_func_t *f, const re_stack_
     e.dis = d->code->dis;
     e.jtables = d->jtables;
     e.code = d->code;
+    e.sites = d->sites;
     {
         re_flow_stat_t fl;
         uint16_t *produced;

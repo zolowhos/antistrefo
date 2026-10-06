@@ -35,6 +35,7 @@ typedef struct {
     const re_xrefset_t *xrefs;
     const re_vec_t *jtables; // tables re_jtable_scan already accepted, or NULL
     re_arena_t *arena;
+    re_vec_t *sites; // re_dc_site_t, filled with the statement-to-address map
 } re_decomp_t;
 
 // Write the C-like body of f to out. The output is pseudo C, not compilable: it is

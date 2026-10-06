@@ -12,6 +12,7 @@
 #include "features/data/re_regions.h"
 #include "features/data/re_vtable.h"
 #include "features/dec/re_cfg.h"
+#include "features/dec/re_dc_print.h"
 #include "features/dec/re_decompile.h"
 #include "features/flow/re_names.h"
 #include "utils/json/re_json.h"
@@ -59,6 +60,52 @@ static void build_xrefs_and_names(re_ctx_t *ctx, re_pe_t *pe, re_code_t *code, r
     re_names_apply(pe, code, scan, &vs, ctx->arena, nm);
 }
 
+static void write_edge(re_jw_t *w, const re_xref_t *x) {
+    re_jw_obj(w);
+    re_jw_khex(w, "from", x->from, 16);
+    re_jw_khex(w, "to", x->to, 16);
+    re_jw_ku64(w, "kind", x->kind);
+    re_jw_ku64(w, "flags", x->flags);
+    if (x->name.n)
+        re_jw_kstr(w, "name", x->name);
+    re_jw_obj_end(w);
+}
+
+static void write_refs(re_jw_t *w, const char *key, const re_xrefset_t *xs, re_arena_t *a,
+                       uint64_t va, uint64_t size, bool into) {
+    re_vec_t idx;
+    size_t i, n;
+    re_vec_init(&idx, sizeof(uint32_t));
+    n = into ? re_xref_into(xs, a, va, size, 32, &idx) : re_xref_out_of(xs, a, va, size, 32, &idx);
+    re_jw_key(w, key);
+    re_jw_arr(w);
+    for (i = 0; i < n; i++) {
+        uint32_t at = *RE_VEC_PTR(&idx, uint32_t, i);
+        write_edge(w, RE_VEC_PTR(&xs->fwd, re_xref_t, at));
+    }
+    re_jw_arr_end(w);
+}
+
+static void write_map(re_jw_t *w, const re_vec_t *sites, const re_xrefset_t *xs) {
+    size_t i;
+    re_jw_key(w, "map");
+    re_jw_arr(w);
+    for (i = 0; sites && i < RE_VEC_LEN(sites); i++) {
+        const re_dc_site_t *s = RE_VEC_PTR(sites, re_dc_site_t, i);
+        size_t k, c = re_xref_from_count(xs, s->va);
+        re_jw_obj(w);
+        re_jw_ku64(w, "line", s->line);
+        re_jw_khex(w, "va", s->va, 16);
+        re_jw_key(w, "to");
+        re_jw_arr(w);
+        for (k = 0; k < c; k++)
+            write_edge(w, re_xref_from_at(xs, s->va, k));
+        re_jw_arr_end(w);
+        re_jw_obj_end(w);
+    }
+    re_jw_arr_end(w);
+}
+
 int re_cmd_decompile(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_file_t f;
     re_pe_t pe;
@@ -84,10 +131,13 @@ int re_cmd_decompile(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_stack_apply_image(&st, &pe);
     re_vec_init(&tables, sizeof(re_jtable_t));
     re_jtable_scan(&code, &scan, ctx->arena, &tables);
+    re_vec_t sites;
+    re_vec_init(&sites, sizeof(re_dc_site_t));
     d.code = &code;
     d.jtables = &tables;
     d.xrefs = &xs;
     d.arena = ctx->arena;
+    d.sites = &sites;
     re_strbuf_init(&text, ctx->arena);
     bool ok = re_decompile_ok(&d, fn);
     if (ok)
@@ -108,10 +158,9 @@ int re_cmd_decompile(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_jw_ku64(&w, "virtual_calls", nm.n_vcalls);
     re_jw_ku64(&w, "eh_scopes", nm.n_scopes);
     re_jw_kstr(&w, "source", re_str(text.p ? text.p : ""));
-    re_vec_t strs;
-    re_vec_init(&strs, sizeof(uint32_t));
-    re_jw_ku64(&w, "strings", re_xref_func_strings(&xs, fn, ctx->arena, &strs));
-    re_vec_truncate(&strs, 0);
+    write_map(&w, &sites, &xs);
+    write_refs(&w, "callers", &xs, ctx->arena, fn->va, fn->size, true);
+    write_refs(&w, "callees", &xs, ctx->arena, fn->va, fn->size, false);
     re_jw_obj_end(&w);
     re_jw_flush(&w, re_ctx_out(ctx));
     re_file_close(&f);
