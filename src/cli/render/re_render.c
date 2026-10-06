@@ -84,7 +84,8 @@ int re_render_info(re_ctx_t *ctx, const char *path) {
     re_strbuf_t subj;
     re_strbuf_t sum;
     const char *sections[3] = {"image", "layout", "imports"};
-    if (!re_prepare(ctx, path, &f, &pe, &code))
+    // Layout only. A missing decoder is not an answer to a question about the header.
+    if (!re_prepare_loose(ctx, path, &f, &pe, &code))
         return re_err_exit_code(ctx->err->code);
     re_report_open(&r, ctx->arena, ctx, sections, 3);
     re_strbuf_init(&subj, ctx->arena);
@@ -117,7 +118,7 @@ int re_render_sections(re_ctx_t *ctx, const char *path) {
     const char *tabs[1] = {"sections"};
     const char *cols[6] = {"name", "vaddr", "vsize", "raw", "entropy", ""};
     const char *cells[6];
-    if (!re_prepare(ctx, path, &f, &pe, &code))
+    if (!re_prepare_loose(ctx, path, &f, &pe, &code))
         return re_err_exit_code(ctx->err->code);
     re_report_open(&r, ctx->arena, ctx, tabs, 1);
     re_strbuf_init(&subj, ctx->arena);
@@ -162,7 +163,7 @@ int re_render_imports(re_ctx_t *ctx, const char *path) {
     const char *cols[4] = {"rva", "hint", "ordinal", "symbol"};
     const char *cells[4];
     size_t shown = 0;
-    if (!re_prepare(ctx, path, &f, &pe, &code))
+    if (!re_prepare_loose(ctx, path, &f, &pe, &code))
         return re_err_exit_code(ctx->err->code);
     re_report_open(&r, ctx->arena, ctx, tabs, 1);
     re_strbuf_init(&subj, ctx->arena);
@@ -231,7 +232,7 @@ int re_render_exports(re_ctx_t *ctx, const char *path) {
     const char *cols[5] = {"kind", "rva", "name", "section", "forwards to"};
     const char *cells[5];
     size_t shown = 0, fwd = 0, data = 0;
-    if (!re_prepare(ctx, path, &f, &pe, &code))
+    if (!re_prepare_loose(ctx, path, &f, &pe, &code))
         return re_err_exit_code(ctx->err->code);
     re_report_open(&r, ctx->arena, ctx, tabs, 1);
     re_strbuf_init(&subj, ctx->arena);

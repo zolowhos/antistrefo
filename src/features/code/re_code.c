@@ -185,6 +185,10 @@ bool re_code_overlaps(const re_code_t *c, uint64_t va, size_t n) {
 }
 
 bool re_code_offset(const re_code_t *c, uint64_t va, uint64_t *off) {
+    // A context that was never bound has pe == NULL. Translating through it is
+    // how analyze died on an x86 image; refuse rather than dereference.
+    if (!c || !c->pe || !off)
+        return false;
     return re_pe_rva2off(c->pe, (uint32_t)(va - c->base), off);
 }
 

@@ -27,6 +27,13 @@ extern "C" {
 // A failure is reported once through ctx->err, so a command has one error path.
 bool re_prepare(re_ctx_t *ctx, const char *path, re_file_t *f, re_pe_t *pe, re_code_t *code);
 
+// The same preamble for the commands that never decode an instruction: info, sections,
+// imports, exports and strings read the parser's output and raw bytes only. When the
+// build has no backend for the image's machine these still succeed, on a context bound
+// for address math without a decoder, because "no disassembler for x86" is not an
+// answer to a question about the section table.
+bool re_prepare_loose(re_ctx_t *ctx, const char *path, re_file_t *f, re_pe_t *pe, re_code_t *code);
+
 // The fields every command's JSON object starts with. The schema, the tool name and
 // the arch are what let a caller parse one response without knowing which command
 // produced it.

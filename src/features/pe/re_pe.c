@@ -102,6 +102,8 @@ static re_err_code_t parse_sections(re_span_t img, re_pe_t *pe, uint64_t sec_at)
 }
 
 bool re_pe_rva2off(const re_pe_t *pe, uint32_t rva, uint64_t *out) {
+    if (!pe || !out)
+        return false;
     for (uint16_t i = 0; i < pe->n_sec; i++) {
         const re_pe_section_t *s = &pe->sec[i];
         uint32_t span = s->vsize > s->rsize ? s->vsize : s->rsize;

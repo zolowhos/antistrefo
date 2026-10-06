@@ -100,7 +100,8 @@ int re_cmd_strings(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_file_t f;
     re_pe_t pe;
     re_code_t code;
-    if (!re_prepare(ctx, path, &f, &pe, &code))
+    // A string scan reads bytes. "no disassembler for x86" is not a string report.
+    if (!re_prepare_loose(ctx, path, &f, &pe, &code))
         return re_err_exit_code(ctx->err->code);
     re_rx_t *rx = NULL;
     re_strings_t full, scanned;

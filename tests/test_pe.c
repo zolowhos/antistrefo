@@ -316,6 +316,27 @@ static void check_func_pick(void) {
     RE_CHECK(empty[0] && re_str_eq_cstr(re_str(empty[0]), "(no functions)"));
 }
 
+// Address translation must work when the build cannot decode the image. analyze's
+// regions pass walks this context; a zeroed pe is the NULL re_pe_rva2off hit on x86.
+static void check_code_binds_without_decoder(const uint8_t *img, const re_pe_t *pe) {
+    re_arena_t a;
+    re_code_t code;
+    uint64_t off = 1;
+    re_arena_init(&a, 4096);
+    memset(&code, 0, sizeof(code));
+    RE_CHECK(!re_code_init(&code, re_span(img, IMG_BYTES), pe, NULL, &a));
+    RE_CHECK(code.pe == pe);
+    RE_CHECK(code.dis == NULL);
+    RE_CHECK_EQ_U(code.base, pe->image_base);
+    RE_CHECK(code.img.p == img);
+    RE_CHECK(re_code_offset(&code, pe->image_base + TEXT_RVA, &off));
+    RE_CHECK_EQ_U(off, HDRS);
+    off = 1;
+    RE_CHECK(!re_pe_rva2off(NULL, TEXT_RVA, &off));
+    RE_CHECK_EQ_U(off, 1); // a NULL parser is a refusal, not a write
+    re_arena_free(&a);
+}
+
 int main(void) {
     uint8_t img[IMG_BYTES];
     re_arena_t a;
@@ -325,6 +346,7 @@ int main(void) {
     re_pe_parse(re_span(img, sizeof(img)), &a, &pe);
     RE_CHECK(pe.valid);
     RE_CHECK_EQ_U(pe.n_sec_field, 2);
+    check_code_binds_without_decoder(img, &pe);
     check_func_pick();
     check_exports(&pe);
     check_export_kinds(&pe);

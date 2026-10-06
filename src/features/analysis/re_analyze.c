@@ -171,7 +171,10 @@ static void run_strings(re_analysis_t *an, re_arena_t *a, re_pass_stat_t *st) {
 }
 
 static void run_regions(re_analysis_t *an, re_arena_t *a, re_pass_stat_t *st) {
-    if (!an->has_pe) {
+    // Classification reads bytes, it does not decode. It does translate virtual
+    // addresses through the code context, so an unbound context (pe == NULL) is a
+    // skip. That is the NULL re_pe_rva2off hit when analyze opened an x86 image.
+    if (!an->has_pe || !an->code.pe) {
         st->skip = RE_PASS_SKIP_UNSUPPORTED;
         return;
     }
@@ -330,8 +333,10 @@ bool re_analysis_open(re_analysis_t *an, re_arena_t *a, const char *path) {
     if (an->has_pe) {
         // Same machine to backend rule the commands use: an image with no backend
         // degrades to no code panes, it is never decoded by the wrong backend.
+        // The context is still bound. Regions translates addresses through it, and
+        // skipping init here left pe NULL, which is what crashed analyze on x86.
         const re_disasm_t *dis = an->pe.machine == 0x8664 ? re_disasm_find("x86-64") : NULL;
-        an->has_code = dis && re_code_init(&an->code, an->file.whole, &an->pe, dis, a);
+        an->has_code = re_code_init(&an->code, an->file.whole, &an->pe, dis, a);
     }
     for (int i = 0; i < RE_PASS_COUNT; i++)
         run_pass(an, a, (re_pass_t)i);

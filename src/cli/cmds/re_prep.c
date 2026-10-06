@@ -23,7 +23,15 @@ static const char *backend_for(uint16_t machine) {
     }
 }
 
-bool re_prepare(re_ctx_t *ctx, const char *path, re_file_t *f, re_pe_t *pe, re_code_t *code) {
+// The shared body of the two preps. need_decoder is the line between them: a command
+// that decodes instructions refuses to run without a backend for the image's machine,
+// because decoding with the wrong one produced confident nonsense (SysV calling
+// conventions on a stdcall binary). A command that only reads the parser's output and
+// the raw bytes continues instead, because re_code_init binds the image, the machine
+// and the base before it reports that it cannot decode, and that is everything address
+// translation needs.
+static bool prepare(re_ctx_t *ctx, const char *path, re_file_t *f, re_pe_t *pe, re_code_t *code,
+                    bool need_decoder) {
     re_err_code_t e = re_file_open(path, ctx->arena, f);
     if (e != RE_OK) {
         RE_ERR_SETF(ctx->err, e, "cannot open %s", path);
@@ -34,13 +42,12 @@ bool re_prepare(re_ctx_t *ctx, const char *path, re_file_t *f, re_pe_t *pe, re_c
         RE_ERR_SETF(ctx->err, e, "cannot parse %s", path);
         return false;
     }
-    // The backend comes from the image's own machine field, not from a literal: an
-    // x86 image handed to an x86-64 decoder produced confident nonsense (SysV
-    // calling conventions on a stdcall binary). Failing with the architecture named
-    // beats succeeding with the wrong answer, and the message says what to build.
     const char *want = backend_for(pe->machine);
     const re_disasm_t *d = want ? re_disasm_find(want) : NULL;
-    if (!re_code_init(code, f->whole, pe, d, ctx->arena)) {
+    if (!re_code_init(code, f->whole, pe, d, ctx->arena) && (need_decoder || d || !pe->valid)) {
+        // The backend either does not exist for this machine or declined the image;
+        // with no backend the context above is still bound, so only a decoder consumer
+        // has to stop here.
         RE_ERR_SETF(ctx->err, RE_E_UNSUPPORTED, "no disassembler for %s in this build",
                     re_pe_machine_name(pe->machine));
         return false;
@@ -48,11 +55,21 @@ bool re_prepare(re_ctx_t *ctx, const char *path, re_file_t *f, re_pe_t *pe, re_c
     return true;
 }
 
+bool re_prepare(re_ctx_t *ctx, const char *path, re_file_t *f, re_pe_t *pe, re_code_t *code) {
+    return prepare(ctx, path, f, pe, code, true);
+}
+
+bool re_prepare_loose(re_ctx_t *ctx, const char *path, re_file_t *f, re_pe_t *pe, re_code_t *code) {
+    return prepare(ctx, path, f, pe, code, false);
+}
+
 void re_envelope(re_jw_t *w, const char *tool, re_span_t img, const re_pe_t *pe) {
     // `arch` is the image's own machine field, the same answer info and triage
-    // give, so every report agrees on what it opened. The backend that decoded it
-    // is a different fact and is carried under its own name.
-    const char *backend = re_disasm_arch_count() > 0 ? re_disasm_arch_name(0) : "none";
+    // give, so every report agrees on what it opened. The backend is the one that
+    // can decode that machine in this build, or none: naming the compiled-in
+    // x86-64 decoder on an x86 image is the same lie the prep split exists to stop.
+    const char *want = backend_for(pe->machine);
+    const char *backend = (want && re_disasm_find(want)) ? want : "none";
     re_jw_obj(w);
     re_jw_kcstr(w, "schema", RE_SCHEMA);
     re_jw_kcstr(w, "tool", tool);

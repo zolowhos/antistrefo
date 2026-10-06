@@ -27,8 +27,10 @@ typedef struct {
     size_t n_words;
 } re_code_t;
 
-// Prepare the map. Returns false when there is no backend or no executable
-// section, which is the honest answer for a parse-only build or a data file.
+// Prepare the map. The image, the parser and the base are written before this
+// returns, including when it returns false: address translation does not need a
+// decoder. False means no backend, an invalid image, or no executable section.
+// A caller that decodes must treat false as "do not decode".
 bool re_code_init(re_code_t *c, re_span_t img, const re_pe_t *pe, const re_disasm_t *dis,
                   re_arena_t *a);
 
