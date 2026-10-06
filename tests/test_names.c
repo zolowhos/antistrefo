@@ -83,8 +83,14 @@ static void check_slot_names_differ(void) {
     re_vtable_scan(&pe, &code, &a, &vs);
     re_names_apply(&pe, &code, &scan, &vs, &a, &nm);
     // The vtable record carries the class name the locator led to; the slot names
-    // are built from it, so the record and the functions must agree.
-    const re_vtable_t *v = RE_VEC_PTR(&vs.vtables, re_vtable_t, 0);
+    // are built from it, so the record and the functions must agree. An empty vec
+    // is a broken fixture, not a reason to dereference null: check it and leave.
+    const re_vtable_t *v = RE_VEC_LEN(&vs.vtables) ? RE_VEC_PTR(&vs.vtables, re_vtable_t, 0) : NULL;
+    RE_CHECK(v != NULL);
+    if (!v) {
+        re_arena_free(&a);
+        return;
+    }
     RE_CHECK(re_str_eq_cstr(v->name, "Probe"));
     re_arena_free(&a);
 }

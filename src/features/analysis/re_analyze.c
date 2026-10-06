@@ -328,7 +328,9 @@ bool re_analysis_open(re_analysis_t *an, re_arena_t *a, const char *path) {
         re_pe_parse(an->file.whole, a, &an->pe) == RE_OK)
         an->has_pe = an->pe.valid;
     if (an->has_pe) {
-        const re_disasm_t *dis = re_disasm_find("x86-64");
+        // Same machine to backend rule the commands use: an image with no backend
+        // degrades to no code panes, it is never decoded by the wrong backend.
+        const re_disasm_t *dis = an->pe.machine == 0x8664 ? re_disasm_find("x86-64") : NULL;
         an->has_code = dis && re_code_init(&an->code, an->file.whole, &an->pe, dis, a);
     }
     for (int i = 0; i < RE_PASS_COUNT; i++)

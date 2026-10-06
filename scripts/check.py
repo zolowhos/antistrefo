@@ -9,7 +9,8 @@ import os
 import re
 import sys
 
-SKIP_DIRS = {".git", ".vs", "build", "out", "__pycache__", ".cache", "Tools"}
+SKIP_DIRS = {".git", ".vs", "build", "out", "__pycache__", ".cache", "Tools",
+             ".freebuff", ".opencode"}  # local agent tooling, like .vs
 MAX_LINES = 500
 MAX_FOLDER_FILES = 15
 MAX_FUNC_LINES = 60

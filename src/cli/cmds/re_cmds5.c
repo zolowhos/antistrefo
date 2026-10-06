@@ -13,6 +13,7 @@
 #include "utils/mem/re_buf.h"
 #include "utils/mem/re_vec.h"
 #include "utils/text/re_str.h"
+#include "utils/text/re_text.h"
 #include "cli/app/re_table.h"
 #include "cli/cmds/re_prep.h"
 
@@ -41,6 +42,58 @@ static re_rx_t *compile_filter(re_ctx_t *ctx, re_span_t img, re_strings_t *full)
     return rx;
 }
 
+// The plain text form: the same rows the JSON carries, as one aligned table. The
+// string stays the last column so only it can run past its measured width.
+static void strings_text(re_ctx_t *ctx, const re_pe_t *pe, const re_vec_t *hits) {
+    re_strbuf_t sb;
+    re_strbuf_init(&sb, ctx->arena);
+    re_text_t t;
+    re_text_init(&t, &sb);
+    char off[16], va[24], rva[16], wide[8];
+    const char *row[5];
+    const char *hdr[5] = {"off", "va", "rva", "enc", "text"};
+    for (size_t i = 0; i < RE_VEC_LEN(hits); i++) {
+        const re_str_hit_t *h = RE_VEC_PTR(hits, re_str_hit_t, i);
+        snprintf(off, sizeof(off), "0x%08llx", (unsigned long long)h->off);
+        uint32_t r = 0;
+        if (re_pe_off2rva(pe, h->off, &r)) {
+            snprintf(va, sizeof(va), "0x%llx", (unsigned long long)(pe->image_base + r));
+            snprintf(rva, sizeof(rva), "0x%x", r);
+        } else {
+            snprintf(va, sizeof(va), "-");
+            snprintf(rva, sizeof(rva), "-");
+        }
+        snprintf(wide, sizeof(wide), "%s", h->wide ? "wide" : "ascii");
+        row[0] = off;
+        row[1] = va;
+        row[2] = rva;
+        row[3] = wide;
+        row[4] = h->text.p ? h->text.p : "";
+        re_text_measure(&t, row, 5);
+    }
+    re_text_header(&t, hdr, 5);
+    for (size_t i = 0; i < RE_VEC_LEN(hits); i++) {
+        const re_str_hit_t *h = RE_VEC_PTR(hits, re_str_hit_t, i);
+        snprintf(off, sizeof(off), "0x%08llx", (unsigned long long)h->off);
+        uint32_t r = 0;
+        if (re_pe_off2rva(pe, h->off, &r)) {
+            snprintf(va, sizeof(va), "0x%llx", (unsigned long long)(pe->image_base + r));
+            snprintf(rva, sizeof(rva), "0x%x", r);
+        } else {
+            snprintf(va, sizeof(va), "-");
+            snprintf(rva, sizeof(rva), "-");
+        }
+        snprintf(wide, sizeof(wide), "%s", h->wide ? "wide" : "ascii");
+        row[0] = off;
+        row[1] = va;
+        row[2] = rva;
+        row[3] = wide;
+        row[4] = h->text.p ? h->text.p : "";
+        re_text_row(&t, row, 5);
+    }
+    fputs(sb.p ? sb.p : "", stdout);
+}
+
 int re_cmd_strings(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     (void)argc;
     (void)argv;
@@ -51,7 +104,11 @@ int re_cmd_strings(re_ctx_t *ctx, const char *path, int argc, char **argv) {
         return re_err_exit_code(ctx->err->code);
     re_rx_t *rx = NULL;
     re_strings_t full, scanned;
+    // Both are initialised: `scanned` feeds the unfiltered report, and an
+    // uninitialised vec here meant a crash or an all zero report depending on what
+    // the caller's stack happened to hold.
     re_strings_init(&full);
+    re_strings_init(&scanned);
     re_strings_scan(f.whole, 4, 20000, ctx->arena, &scanned);
     if (ctx->has_regex) {
         rx = compile_filter(ctx, f.whole, &full);
@@ -64,6 +121,11 @@ int re_cmd_strings(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_vec_init(&hits, sizeof(re_str_hit_t));
     const re_strings_t *src = rx ? &full : &scanned;
     size_t matched = re_strings_filter(ctx->arena, src, rx, ctx->offset, ctx->limit, &hits);
+    if (ctx->out == RE_FMT_OUT_TEXT) {
+        strings_text(ctx, &pe, &hits);
+        re_file_close(&f);
+        return 0;
+    }
     re_jw_t w;
     re_jw_init(&w, ctx->arena);
     re_envelope(&w, "strings", f.whole, &pe);

@@ -8,7 +8,20 @@
 #include "features/data/re_gopath.h"
 #include "features/lib/re_sigfile.h"
 #include "features/pe/re_format.h"
+#include "features/pe/re_pe.h"
 #include "utils/text/re_hex.h"
+
+// Which registered backend an image's machine field asks for, or NULL when none
+// exists. The constant is the PE machine value for AMD64; every other machine
+// stays unsupported until a backend is written for it.
+static const char *backend_for(uint16_t machine) {
+    switch (machine) {
+        case 0x8664:
+            return "x86-64";
+        default:
+            return NULL;
+    }
+}
 
 bool re_prepare(re_ctx_t *ctx, const char *path, re_file_t *f, re_pe_t *pe, re_code_t *code) {
     re_err_code_t e = re_file_open(path, ctx->arena, f);
@@ -21,25 +34,31 @@ bool re_prepare(re_ctx_t *ctx, const char *path, re_file_t *f, re_pe_t *pe, re_c
         RE_ERR_SETF(ctx->err, e, "cannot parse %s", path);
         return false;
     }
-    // The arch is looked up rather than assumed, so a build with no backend fails
-    // with a clear message here instead of dereferencing a null vtable further on.
-    const re_disasm_t *d = re_disasm_find("x86-64");
+    // The backend comes from the image's own machine field, not from a literal: an
+    // x86 image handed to an x86-64 decoder produced confident nonsense (SysV
+    // calling conventions on a stdcall binary). Failing with the architecture named
+    // beats succeeding with the wrong answer, and the message says what to build.
+    const char *want = backend_for(pe->machine);
+    const re_disasm_t *d = want ? re_disasm_find(want) : NULL;
     if (!re_code_init(code, f->whole, pe, d, ctx->arena)) {
-        RE_ERR_SET(ctx->err, RE_E_UNSUPPORTED, "no x86-64 disassembler in this build");
+        RE_ERR_SETF(ctx->err, RE_E_UNSUPPORTED, "no disassembler for %s in this build",
+                    re_pe_machine_name(pe->machine));
         return false;
     }
     return true;
 }
 
 void re_envelope(re_jw_t *w, const char *tool, re_span_t img, const re_pe_t *pe) {
-    // A single backend exists, so this is the first arch rather than a lookup. It
-    // stays honest because re_code_init would have failed without a vtable.
-    const char *arch = re_disasm_arch_count() > 0 ? re_disasm_arch_name(0) : "none";
+    // `arch` is the image's own machine field, the same answer info and triage
+    // give, so every report agrees on what it opened. The backend that decoded it
+    // is a different fact and is carried under its own name.
+    const char *backend = re_disasm_arch_count() > 0 ? re_disasm_arch_name(0) : "none";
     re_jw_obj(w);
     re_jw_kcstr(w, "schema", RE_SCHEMA);
     re_jw_kcstr(w, "tool", tool);
     re_jw_kcstr(w, "format", re_format_name(re_format_detect(img)));
-    re_jw_kcstr(w, "arch", arch);
+    re_jw_kcstr(w, "arch", re_pe_machine_name(pe->machine));
+    re_jw_kcstr(w, "disasm_backend", backend);
     re_jw_ku64(w, "size", img.n);
     re_jw_ku64(w, "image_base", pe->image_base);
 }

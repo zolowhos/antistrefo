@@ -44,3 +44,7 @@ __pycache__/
 # local sigdb and test scratch
 /sigdb/
 /scratch/
+
+# local agent tooling; the rule gate reads tracked files only
+/.freebuff/
+/.opencode/

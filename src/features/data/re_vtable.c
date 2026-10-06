@@ -61,6 +61,11 @@ static bool slot_ptr(const re_pe_t *pe, uint32_t rva, uint32_t *out) {
 // code pointers from being reported as a class.
 bool re_vtable_col_at(const re_pe_t *pe, uint32_t rva, uint32_t *td_rva, uint32_t *bcd_rva) {
     uint32_t sig = 0, self = 0, td = 0, bcd = 0;
+    // Rva zero is the headers, never a locator. Zero filled data offers this
+    // candidate on every scan, and the pSelf check cannot refuse it, because zero
+    // reads back as zero and self == rva holds for free.
+    if (rva == 0)
+        return false;
     if (rva > 0xFFFFFF00u || rva + COL_SIZE > 0x100000000u)
         return false;
     if (!rd32(pe, rva, &sig) || !rd32(pe, rva + 12u, &td) || !rd32(pe, rva + 16u, &bcd) ||

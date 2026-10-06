@@ -8,6 +8,7 @@
 #include "utils/text/re_util.h"
 #include "cli/app/re_table.h"
 #include "cli/cmds/re_cmds.h"
+#include "mcp/re_mcp_tools.h"
 
 #include <cstdio>
 #include <cstring>
@@ -142,19 +143,40 @@ static const char *session_path(const Server &s, re_str_t name) {
     return nullptr;
 }
 
-static void handle_session_open(Server *s, re_arena_t *a, double id, const re_jr_t *args) {
+// The list itself, as both the session/list method and the session_list tool carry
+// the same object, so the two faces cannot drift.
+static void sessions_json(const Server &s, re_arena_t *a, re_strbuf_t *b) {
+    (void)a;
+    re_strbuf_puts(b, "{\"sessions\":[");
+    for (size_t i = 0; i < s.n_sessions; i++) {
+        if (i)
+            re_strbuf_putc(b, ',');
+        re_strbuf_puts(b, "{\"name\":");
+        re_jr_escape(b, re_str(s.sessions[i].name));
+        re_strbuf_puts(b, ",\"path\":");
+        re_jr_escape(b, re_str(s.sessions[i].path));
+        re_strbuf_putc(b, '}');
+    }
+    re_strbuf_puts(b, "]}");
+}
+
+// Open one session into the buffer. A message is returned when the call cannot be
+// made, and the caller decides whether that is a method error or a tool error.
+static void session_open_json(Server *s, re_arena_t *a, const re_jr_t *args, re_strbuf_t *b,
+                              const char **errmsg) {
+    *errmsg = nullptr;
     re_str_t name = re_jr_str(re_jr_get(args, "name"), "");
     re_str_t path = re_jr_str(re_jr_get(args, "path"), "");
     if (!name.n || !path.n) {
-        send_error(a, id, kErrParams, "session_open needs name and path");
+        *errmsg = "session_open needs name and path";
         return;
     }
     if (session_path(*s, name)) {
-        send_error(a, id, kErrParams, "that session name is already open");
+        *errmsg = "that session name is already open";
         return;
     }
     if (s->n_sessions >= sizeof(s->sessions) / sizeof(s->sessions[0])) {
-        send_error(a, id, kErrInternal, "too many sessions open");
+        *errmsg = "too many sessions open";
         return;
     }
     // Both are copied into the server arena, which lives for the whole session, so a
@@ -162,101 +184,75 @@ static void handle_session_open(Server *s, re_arena_t *a, double id, const re_jr
     s->sessions[s->n_sessions].name = re_arena_strdup(&s->arena, name.p);
     s->sessions[s->n_sessions].path = re_arena_strdup(&s->arena, path.p);
     s->n_sessions++;
+    sessions_json(*s, a, b);
+}
+
+static void handle_session_open(Server *s, re_arena_t *a, double id, const re_jr_t *args) {
     re_strbuf_t b;
     re_strbuf_init(&b, a);
-    re_strbuf_puts(&b, "{\"sessions\":[");
-    for (size_t i = 0; i < s->n_sessions; i++) {
-        if (i)
-            re_strbuf_putc(&b, ',');
-        re_strbuf_puts(&b, "{\"name\":");
-        re_jr_escape(&b, re_str(s->sessions[i].name));
-        re_strbuf_puts(&b, ",\"path\":");
-        re_jr_escape(&b, re_str(s->sessions[i].path));
-        re_strbuf_putc(&b, '}');
-    }
-    re_strbuf_puts(&b, "]}");
-    send_result(a, id, &b);
+    const char *errmsg = nullptr;
+    session_open_json(s, a, args, &b, &errmsg);
+    if (errmsg)
+        send_error(a, id, kErrParams, errmsg);
+    else
+        send_result(a, id, &b);
 }
 
 static void handle_session_list(re_arena_t *a, double id, const Server &s) {
     re_strbuf_t b;
     re_strbuf_init(&b, a);
-    re_strbuf_puts(&b, "{\"sessions\":[");
-    for (size_t i = 0; i < s.n_sessions; i++) {
-        if (i)
-            re_strbuf_putc(&b, ',');
-        re_strbuf_puts(&b, "{\"name\":");
-        re_jr_escape(&b, re_str(s.sessions[i].name));
-        re_strbuf_puts(&b, ",\"path\":");
-        re_jr_escape(&b, re_str(s.sessions[i].path));
-        re_strbuf_putc(&b, '}');
-    }
-    re_strbuf_puts(&b, "]}");
+    sessions_json(s, a, &b);
     send_result(a, id, &b);
 }
 
 // ---- tools/call ----
 
-// Run one command and capture what it wrote. The command writes to a temporary file
-// rather than a buffer because the writer takes a FILE and changing that would mean
-// touching every command; the file is the smallest seam that works.
-static bool capture(const re_cmd_t *cmd, const char *path, const re_jr_t *args, re_arena_t *a,
-                    re_strbuf_t *out) {
-    re_ctx_t ctx;
-    re_err_t err;
-    re_arena_t work;
-    re_arena_init(&work, 0);
-    std::memset(&ctx, 0, sizeof(ctx));
-    err.code = RE_OK;
-    ctx.arena = &work;
-    ctx.err = &err;
-    ctx.out = RE_FMT_OUT_JSON; // a protocol client always wants the object
-    ctx.limit = re_jr_i64(re_jr_get(args, "limit"), 200);
-    if (ctx.limit <= 0)
-        ctx.limit = 200;
-    FILE *sink = std::tmpfile();
-    if (!sink) {
-        re_arena_free(&work);
+// The session tools are not commands, so they are handled here before the table is
+// consulted, but they are reachable through the same tools/call door: an agent can
+// only call what tools/list names, so the raw session methods are not enough.
+static bool call_session_tool(Server *s, re_arena_t *a, double id, re_str_t name,
+                              const re_jr_t *args) {
+    re_strbuf_t b;
+    re_strbuf_init(&b, a);
+    bool is_error = false;
+    if (re_str_eq_cstr(name, "session_open")) {
+        const char *errmsg = nullptr;
+        session_open_json(s, a, args, &b, &errmsg);
+        if (errmsg)
+            mcp_tool_error(&b, errmsg, &is_error);
+    } else if (re_str_eq_cstr(name, "session_list")) {
+        sessions_json(*s, a, &b);
+    } else {
         return false;
     }
-    ctx.stream = sink;
-    int first = 0;
-    char arg0[1] = {0};
-    char *argv[1] = {arg0}; // a path is never parsed from, only counted past
-    (void)argv;
-    if (!re_cmd_parse(&ctx, 1, argv, &first, &err)) {
-        re_arena_free(&work);
-        std::fclose(sink);
-        return false;
-    }
-    cmd->fn(&ctx, path, 0, nullptr);
-    std::rewind(sink);
-    char chunk[4096];
-    size_t got;
-    while ((got = std::fread(chunk, 1, sizeof(chunk), sink)) > 0)
-        re_strbuf_append(out, chunk, got);
-    std::fclose(sink);
-    re_arena_free(&work);
-    // A command ends its response with a newline. That is right on stdout and wrong
-    // here: the response is about to be embedded inside a larger JSON object, and a raw
-    // newline in the middle of one would split the protocol frame in two.
-    while (out->len && (out->p[out->len - 1] == '\n' || out->p[out->len - 1] == '\r'))
-        out->p[--out->len] = '\0';
-    (void)a;
-    return out->len > 0;
+    send_tool_result(a, id, &b, is_error);
+    return true;
 }
 
 static void handle_tools_call(Server *s, re_arena_t *a, double id, const re_jr_t *params) {
     re_str_t name = re_jr_str(re_jr_get(params, "name"), "");
     const re_jr_t *args = re_jr_get(params, "arguments");
+    if (call_session_tool(s, a, id, name, args))
+        return;
     const re_cmd_t *cmd = re_cmd_find(name.p ? name.p : "");
     re_strbuf_t out;
     re_strbuf_init(&out, a);
+    bool is_error = false;
     if (!cmd) {
-        re_strbuf_t empty;
-        re_strbuf_init(&empty, a);
-        re_strbuf_puts(&empty, "{\"error\":\"unknown tool\"}");
-        send_tool_result(a, id, &empty, true);
+        mcp_tool_error(&out, "no such tool", &is_error);
+        send_tool_result(a, id, &out, is_error);
+        return;
+    }
+    if (cmd->interactive) {
+        // A full screen view or a prompt wants the terminal that stdio is using.
+        // Refusing names the reason, where letting it run would answer in escape
+        // sequences and take the protocol stream with it.
+        re_strbuf_t msg;
+        re_strbuf_init(&msg, a);
+        re_jr_escape(&msg, name);
+        re_strbuf_puts(&msg, " is interactive, and is not available over MCP");
+        mcp_tool_error(&out, msg.p ? msg.p : "interactive", &is_error);
+        send_tool_result(a, id, &out, is_error);
         return;
     }
     const char *path = nullptr;
@@ -268,17 +264,13 @@ static void handle_tools_call(Server *s, re_arena_t *a, double id, const re_jr_t
         else if (sess.n)
             path = session_path(*s, sess);
     }
-    if (!path) {
-        re_strbuf_puts(&out, "{\"error\":\"no file: give path, or a session from session_open\"}");
-        send_tool_result(a, id, &out, true);
+    if (cmd->needs_path && !path) {
+        mcp_tool_error(&out, "no file: give path, or a session from session_open", &is_error);
+        send_tool_result(a, id, &out, is_error);
         return;
     }
-    if (!capture(cmd, path, args, a, &out)) {
-        re_strbuf_puts(&out, "{\"error\":\"the command produced no response\"}");
-        send_tool_result(a, id, &out, true);
-        return;
-    }
-    send_tool_result(a, id, &out, false);
+    mcp_run_tool(cmd, path, args, a, &out, &is_error);
+    send_tool_result(a, id, &out, is_error);
 }
 
 } // namespace
@@ -297,24 +289,30 @@ static const re_jr_t *params_of(const re_jr_t *req) {
 
 // ---- tools/list, generated from the one command table ----
 
-// The input schema for one command, derived from its usage string. A hand written
-// schema per command would drift from the table, and a client that sends a field the
-// tool never reads is a bug report about a tool that has not changed.
-static void tool_schema(re_strbuf_t *b, const re_cmd_t *cmd) {
-    re_strbuf_puts(b, "{\"type\":\"object\",\"properties\":{");
-
-    if (cmd->needs_path) {
-        re_strbuf_puts(
-            b, "\"path\":{\"type\":\"string\",\"description\":\"the file to read, an "
-               "absolute or relative path\"},"
-               "\"session\":{\"type\":\"string\",\"description\":\"a name from session_open, "
-               "used instead of path\"},");
-    }
-
-    re_strbuf_puts(
-        b, "\"offset\":{\"type\":\"integer\",\"description\":\"skip this many results\"},"
-           "\"limit\":{\"type\":\"integer\",\"description\":\"return at most this many results\"}"
-           "},\"required\":[]}");
+// The session tools are not commands, so the table does not carry them, but a client
+// can only call what tools/list names: leaving them out made the session registry
+// unreachable for every standard MCP client.
+static void session_tools(re_strbuf_t *b) {
+    re_strbuf_puts(b, ",");
+    re_strbuf_puts(b, "{");
+    re_strbuf_puts(b, "\"name\":\"session_open\",");
+    re_strbuf_puts(b, "\"description\":");
+    re_jr_escape(b, re_str("register a file under a name, so later calls can pass the name"));
+    re_strbuf_puts(b, ",");
+    re_strbuf_puts(b, "\"inputSchema\":{");
+    re_strbuf_puts(b, "\"type\":\"object\",");
+    re_strbuf_puts(b, "\"properties\":{");
+    re_strbuf_puts(b, "\"name\":{\"type\":\"string\"},");
+    re_strbuf_puts(b, "\"path\":{\"type\":\"string\"}}");
+    re_strbuf_puts(b, ",\"required\":[\"name\",\"path\"]}}");
+    re_strbuf_puts(b, ",");
+    re_strbuf_puts(b, "{");
+    re_strbuf_puts(b, "\"name\":\"session_list\",");
+    re_strbuf_puts(b, "\"description\":");
+    re_jr_escape(b, re_str("list the files currently registered by session_open"));
+    re_strbuf_puts(b, ",");
+    re_strbuf_puts(b, "\"inputSchema\":{");
+    re_strbuf_puts(b, "\"type\":\"object\",\"properties\":{},\"required\":[]}}");
 }
 
 static void handle_tools_list(re_arena_t *a, double id) {
@@ -325,8 +323,10 @@ static void handle_tools_list(re_arena_t *a, double id) {
     re_strbuf_puts(&b, "{\"tools\":[");
     size_t emitted = 0;
     for (size_t i = 0; i < n; i++) {
-        // A command with no function is a table entry for a builtin, not a tool.
-        if (!table[i].fn)
+        // A command with no function is a table entry for a builtin, not a tool. An
+        // interactive command would take the terminal that stdio is using, so it is
+        // not an invitation either.
+        if (!table[i].fn || table[i].interactive)
             continue;
         if (emitted++)
             re_strbuf_putc(&b, ',');
@@ -335,9 +335,10 @@ static void handle_tools_list(re_arena_t *a, double id) {
         re_strbuf_puts(&b, ",\"description\":");
         re_jr_escape(&b, re_strn(table[i].summary, text_len(table[i].summary)));
         re_strbuf_puts(&b, ",\"inputSchema\":");
-        tool_schema(&b, &table[i]);
+        mcp_tool_schema(&table[i], &b);
         re_strbuf_putc(&b, '}');
     }
+    session_tools(&b);
     re_strbuf_puts(&b, "]}");
     send_result(a, id, &b);
 }

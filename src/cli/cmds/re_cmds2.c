@@ -101,14 +101,23 @@ int re_cmd_search(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_search_kind_t kind = search_kind(re_str(pat_arg), &pat);
     re_search_t s;
     re_search_init(&s);
-    if (kind == RE_SEARCH_BYTES) {
-        uint8_t *by = NULL;
-        uint8_t *mk = NULL;
-        size_t n = 0;
-        if (!re_search_parse_pattern(ctx->arena, pat.p, &by, &mk, &n, ctx->err)) {
+    uint8_t *by = NULL;
+    uint8_t *mk = NULL;
+    size_t n = 0;
+    if (kind == RE_SEARCH_BYTES &&
+        !re_search_parse_pattern(ctx->arena, pat.p, &by, &mk, &n, ctx->err)) {
+        // A bare pattern that cannot be hex pairs is searched as text: the docs
+        // promise text without asking for a prefix, and a pattern holding a non hex
+        // byte could never have been hex anyway. The text: prefix still forces text
+        // for a pattern that looks like hex, and a non usage failure is an error.
+        if (ctx->err->code != RE_E_USAGE) {
             re_file_close(&f);
             return re_err_exit_code(ctx->err->code);
         }
+        kind = RE_SEARCH_TEXT;
+        RE_ERR_OK(ctx->err);
+    }
+    if (kind == RE_SEARCH_BYTES) {
         re_search_bytes(img, by, mk, n, ctx->offset, ctx->limit, ctx->arena, &s);
     } else if (kind == RE_SEARCH_IMMEDIATE) {
         if (!run_immediate(ctx, img, pat, &s)) {

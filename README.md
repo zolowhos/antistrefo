@@ -79,7 +79,7 @@ Every command also works as a plain command, so nothing is locked inside a sessi
 | `imports <file>` | Imported modules and symbols, demangled when possible |
 | `exports <file>` | Exported symbols, demangled when possible |
 | `strings <file>` | ASCII and UTF-16 strings, with a regex filter |
-| `search <file>` | Find text, an immediate value, or a hex pattern with wildcards |
+| `search <file>` | Find text, an immediate value, or a hex pattern with wildcards. A bare pattern that cannot be hex pairs is searched as text; `text:`, `imm:` or `sym:` prefix the pattern to force a mode |
 | `funcs <file>` | Recovered functions with size, frame and call counts |
 | `xrefs <file>` | Cross references, with imports, exports and strings named |
 | `jtables <file>` | Jump tables behind an indirect branch, with case targets |
@@ -137,9 +137,14 @@ $ antistrefo mcp
 ```
 
 Speaks MCP over stdio, one JSON object per call. Every report command is available as
-a tool, so an assistant can run the passes and read the same fields the CLI prints. The
-`--limit` default exists for this: it is the guard that keeps a whole-file answer from
-filling a context window.
+a tool, so an assistant can run the passes and read the same fields the CLI prints.
+Every argument a tool's schema advertises is honoured - `addr`, `pattern`, `symbol`,
+`regex`, `--len`, paging and the rest reach the command exactly as the CLI would pass
+them - and `--limit` stays the guard that keeps a whole-file answer from filling a
+context window. A failing tool call returns the command's own error, so "no
+disassembler for x86 in this build" reaches the caller instead of a silent empty
+answer. The full screen view and the shell prompt are not tools: they need the
+terminal stdio lives on.
 
 
 ## Development

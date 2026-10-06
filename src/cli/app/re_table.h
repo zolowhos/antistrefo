@@ -60,6 +60,10 @@ typedef struct {
     char usage[64];
     re_cmd_fn fn;
     bool needs_path;
+    // An interactive command wants the terminal stdio lives on: the full screen view
+    // and the shell prompt. The MCP server refuses these before running anything,
+    // because a protocol frame stream and a TUI cannot share the same pipe.
+    bool interactive;
 } re_cmd_t;
 
 const re_cmd_t *re_cmd_table(size_t *count);

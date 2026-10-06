@@ -202,7 +202,10 @@ void re_strings_pdb(re_span_t img, re_arena_t *a, re_strings_t *out) {
 }
 
 // Apply a regex filter, honouring offset and limit, and report how many hits
-// matched in total so the caller can set the truncated flag honestly.
+// matched in total so the caller can set the truncated flag honestly. A null filter
+// matches everything: "no filter" is not "match nothing", which is what the regex
+// engine answers when handed a null, and passing hits through it unfiltered turned
+// the plain strings report into an empty one.
 size_t re_strings_filter(re_arena_t *a, const re_strings_t *s, re_rx_t *rx, size_t offset,
                          size_t limit, re_vec_t *out_hits) {
     size_t matched = 0;
@@ -211,7 +214,7 @@ size_t re_strings_filter(re_arena_t *a, const re_strings_t *s, re_rx_t *rx, size
         const re_str_hit_t *h = RE_VEC_PTR(&s->hits, re_str_hit_t, i);
         size_t st = 0;
         size_t en = 0;
-        if (!re_rx_search(rx, h->text, &st, &en))
+        if (rx && !re_rx_search(rx, h->text, &st, &en))
             continue;
         if (matched++ < offset)
             continue;

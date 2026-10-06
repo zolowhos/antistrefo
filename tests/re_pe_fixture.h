@@ -80,7 +80,12 @@ static inline void build_rtti(uint8_t *ed);
 // starts requiring a new field shows up as a failing test rather than as a silently
 // different fixture.
 static inline void build_pe(uint8_t *img) {
-    memset(img, 0, HDRS);
+    // The whole image is zeroed, not just the headers: the RTTI and export layouts
+    // below write every field they care about and nothing else, and a reader that
+    // widens a read (the 8 byte vtable slots do) must see zeroes there, not whatever
+    // the caller's stack happened to hold. A fixture full of stack garbage makes the
+    // pass under test look nondeterministic, which is exactly what it did.
+    memset(img, 0, IMG_BYTES);
     put16(img, 0x5A4D);             // MZ
     put32(img + 0x3C, 0x40);        // e_lfanew
     put32(img + 0x40, 0x00004550u); // PE\0\0
