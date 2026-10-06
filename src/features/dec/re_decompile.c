@@ -7,6 +7,7 @@
 //           reached only through the re_disasm_t vtable, so no x86 detail appears.
 #include "features/dec/re_decompile.h"
 
+#include "features/code/re_jtable.h"
 #include "features/code/re_stack.h"
 #include "features/dec/re_dc_fold.h"
 #include "features/dec/re_dc_print.h"
@@ -83,17 +84,32 @@ static void emit_cbranch(re_dc_emit_t *e, const re_ir_op_t *op, const re_dc_walk
     e->have_cmp = false;
 }
 
-// Control flow, casts, and anything else the IR can carry. Kept apart from emit_op
-// because the control flow ops need the block structure, not just the op.
-// A branch to the address right after its own instruction is a jump the machine
-// executed as a no-op: the next block runs either way. Printing it would put a
-// goto between a reader and the statement they came for, so it prints nothing.
-// A branch to anywhere else keeps its goto, because dropping a real transfer is
-// how a reader is misled about a function.
+static bool emit_switch(re_dc_emit_t *e, const re_ir_op_t *op, const re_dc_walk_t *w,
+                        const re_jtable_t *jt) {
+    uint32_t i;
+    (void)op;
+    if (!jt || !jt->count)
+        return false;
+    re_dc_line(e, "switch (index) {");
+    for (i = 0; i < jt->count; i++) {
+        uint64_t dest = re_jtable_target(e->code, jt, i);
+        uint32_t cl = dest ? re_dc_label_of(w, dest) : 0;
+        if (cl)
+            re_dc_stmt(e, "case %u: goto L%u", i, cl);
+        else
+            re_dc_line(e, "case %u:", i);
+    }
+    re_dc_line(e, "}");
+    return true;
+}
+
 static void emit_flow(re_dc_emit_t *e, const re_ir_op_t *op, const re_dc_walk_t *w) {
     uint32_t lbl = re_dc_label_of(w, (uint64_t)op->const_val);
     if (op->op == RE_OP_BRANCH) {
+        const re_jtable_t *jt = re_jtable_for(e->jtables, op->addr);
         if (op->addr && (uint64_t)op->const_val == e->next_addr)
+            return;
+        if (emit_switch(e, op, w, jt))
             return;
         if (lbl)
             re_dc_stmt(e, "goto L%u", lbl);
@@ -330,15 +346,6 @@ static void emit_op(re_dc_emit_t *e, const re_ir_op_t *op, const re_dc_walk_t *w
     emit_flow(e, op, w);
 }
 
-// The signature. The calling convention was inferred from which registers are read
-// before written, so the parameter count is that inference, not a guess from the
-// prologue. A frame pointer makes the convention observable in the prologue bytes,
-// and printing it is what tells a reader which ABI to assume.
-//
-// The parameters are named for the registers they arrive in, because that is what the
-// inference actually knows: it knows rcx arrived first, and calling it a0 throws away
-// the one fact a reader can check. Where the convention is unknown there are no
-// parameters to name and the list is empty rather than guessed.
 static void emit_params(re_dc_emit_t *e, const re_stack_t *st) {
     uint32_t nargs = st ? st->n_params : 0;
     if (nargs > RE_CC_MAX_ARGS)
@@ -406,15 +413,6 @@ static const re_ir_op_t *ops_from(const re_ir_func_t *ir, size_t at) {
     return &ir->blocks[ir->n_blocks - 1].ops[at];
 }
 
-// The lowering phase: every instruction through the arch's lower hook, then the
-// whole op stream through the flow pass, then the width learning. The phases are
-// kept apart on purpose: a transform that ran interleaved with printing would
-// race its own input, because the idioms rewrite ops the printer has already
-// walked past, and the declarations must precede the body, which they can only
-// do once the widths the body used are known. The per instruction op counts
-// survive the transform unchanged, because the pass rewrites ops in place and
-// never adds or removes one, which is what lets printing stay in instruction
-// order.
 static uint16_t *lower_body(re_dc_emit_t *e, const re_dc_walk_t *w, re_ir_func_t *ir,
                             uint64_t entry, uint64_t size, re_code_t *code, re_flow_stat_t *fl) {
     size_t n = RE_VEC_LEN(&w->insns);
@@ -435,9 +433,6 @@ static uint16_t *lower_body(re_dc_emit_t *e, const re_dc_walk_t *w, re_ir_func_t
     return produced;
 }
 
-// The printing phase: labels, statements, and the unlowered exceptions. Kept
-// separate from the lowering so the declarations the reader sees first can name
-// the types the body proved, which is the whole reason for the two passes.
 static void print_body(re_dc_emit_t *e, const re_dc_walk_t *w, const re_ir_func_t *ir,
                        const uint16_t *produced) {
     size_t n = RE_VEC_LEN(&w->insns);
@@ -483,6 +478,8 @@ void re_decompile_func(const re_decomp_t *d, const re_func_t *f, const re_stack_
     e.xrefs = d->xrefs;
     e.st = st;
     e.dis = d->code->dis;
+    e.jtables = d->jtables;
+    e.code = d->code;
     {
         re_flow_stat_t fl;
         uint16_t *produced;

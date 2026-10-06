@@ -63,6 +63,7 @@ static void check_entry(const char *path) {
     re_xref_build(&code, &scan, &pe, &a, &xs);
     re_stack_analyze(&code, fn, &a, &st);
     d.code = &code;
+    d.jtables = NULL;
     d.xrefs = &xs;
     d.arena = &a;
     re_strbuf_init(&text, &a);

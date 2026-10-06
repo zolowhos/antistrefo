@@ -106,6 +106,7 @@ static void pseudo_fill(pseudo_t *ps, re_arena_t *a, re_analysis_t *an, size_t s
         return;
     const re_func_t *f = RE_VEC_PTR(&an->scan.funcs, re_func_t, sel);
     re_decomp_t d;
+    d.jtables = NULL;
     d.code = &an->code;
     d.xrefs = &an->xs;
     d.arena = a;

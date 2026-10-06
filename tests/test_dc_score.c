@@ -112,6 +112,7 @@ static const char *decompile_at(re_arena_t *a, const char *path, uint64_t va) {
     re_xref_build(&code, &scan, &pe, a, &xs);
     re_stack_analyze(&code, RE_VEC_PTR(&scan.funcs, re_func_t, (size_t)idx), a, &st);
     d.code = &code;
+    d.jtables = NULL;
     d.xrefs = &xs;
     d.arena = a;
     re_strbuf_init(&text, a);

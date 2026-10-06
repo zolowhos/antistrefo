@@ -11,7 +11,12 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "features/code/re_jtable.h"
+#include "features/dec/re_decompile.h"
+#include "features/meta/re_disasm.h"
+#include "features/pe/re_pe.h"
 #include "utils/json/re_jr.h"
+#include "re_pe_fixture.h"
 #include "utils/mem/re_arena.h"
 #include "utils/text/re_strbuf.h"
 
@@ -166,6 +171,57 @@ static void test_escape_out(re_arena_t *a) {
     RE_CHECK(re_str_eq_cstr(re_strn(b.p, b.len), "\"\""));
 }
 
+static void test_switch(void) {
+    uint8_t img[IMG_BYTES];
+    re_arena_t a;
+    re_pe_t pe;
+    re_code_t code;
+    re_func_t f;
+    re_decomp_t d;
+    re_strbuf_t out;
+    re_vec_t tables;
+    re_jtable_t jt;
+    const char *src;
+    unsigned cases = 0;
+    build_pe(img);
+    re_arena_init(&a, 65536);
+    re_span_t span = {img, sizeof(img)};
+    RE_CHECK(re_pe_parse(span, &a, &pe) == RE_OK && pe.valid);
+    RE_CHECK(re_code_init(&code, span, &pe, re_disasm_find("x86-64"), &a));
+    memset(&f, 0, sizeof(f));
+    f.va = IMAGE_BASE + TEXT_RVA;
+    f.rva = TEXT_RVA;
+    f.size = 20;
+    f.flags = RE_FUNC_ENTRY | RE_FUNC_RET;
+    memset(&d, 0, sizeof(d));
+    d.code = &code;
+    d.arena = &a;
+    re_strbuf_init(&out, &a);
+    re_decompile_func(&d, &f, NULL, &out);
+    RE_CHECK(out.p && !strstr(out.p, "switch ("));
+    memset(&jt, 0, sizeof(jt));
+    jt.at = IMAGE_BASE + TEXT_RVA + 0xB;
+    jt.table_va = IMAGE_BASE + TEXT_RVA;
+    jt.count = 2;
+    jt.bound = 2;
+    jt.width = 4;
+    jt.encoding = 1;
+    re_vec_init(&tables, sizeof(jt));
+    RE_VEC_PUSH(&tables, &a, jt);
+    d.jtables = &tables;
+    re_strbuf_init(&out, &a);
+    re_decompile_func(&d, &f, NULL, &out);
+    src = out.p ? out.p : "";
+    RE_CHECK(strstr(src, "switch ("));
+    RE_CHECK(!strstr(src, "goto 0x"));
+    while ((src = strstr(src, "case ")) != NULL) {
+        cases++;
+        src += 5;
+    }
+    RE_CHECK_EQ_U(cases, 2);
+    re_arena_free(&a);
+}
+
 int main(void) {
     re_arena_t a;
     re_arena_init(&a, 0);
@@ -175,6 +231,7 @@ int main(void) {
     test_containers(&a);
     test_refuses(&a);
     test_escape_out(&a);
+    test_switch();
     re_arena_free(&a);
     return re_test_report("jr");
 }

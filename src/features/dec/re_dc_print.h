@@ -45,6 +45,8 @@ typedef struct {
     size_t n_stmts;
     size_t n_unknown;
     const re_disasm_t *dis;
+    const re_vec_t *jtables;
+    const re_code_t *code;
     int16_t sw_disp[RE_SLOT_MAX]; // the stack displacements the body touched
     uint8_t sw_w[RE_SLOT_MAX];    // and the widest access each one saw
     uint32_t n_sw;

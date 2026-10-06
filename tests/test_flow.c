@@ -308,6 +308,7 @@ static void check_emit(void) {
     f.size = 20;
     f.flags = RE_FUNC_ENTRY | RE_FUNC_RET;
     d.code = &code;
+    d.jtables = NULL;
     d.xrefs = NULL;
     d.arena = &a;
     re_strbuf_init(&out, &a);
@@ -349,6 +350,7 @@ static void check_pred_lowered(void) {
     f.size = sizeof(kPred);
     f.flags = RE_FUNC_ENTRY | RE_FUNC_RET;
     d.code = &code;
+    d.jtables = NULL;
     d.xrefs = NULL;
     d.arena = &a;
     re_strbuf_init(&out, &a);

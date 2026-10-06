@@ -39,6 +39,9 @@ size_t re_jtable_scan(re_code_t *c, const re_fscan_t *scan, re_arena_t *a, re_ve
 // The target of entry i, in the same encoding the table was read with, or 0 when
 // the index is out of range.
 uint64_t re_jtable_target(const re_code_t *c, const re_jtable_t *t, uint32_t i);
+
+// The table an indirect branch already accepted, or NULL. This does not scan.
+const re_jtable_t *re_jtable_for(const re_vec_t *tables, uint64_t at);
 #ifdef __cplusplus
 }
 #endif

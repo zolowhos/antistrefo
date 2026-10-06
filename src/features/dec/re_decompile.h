@@ -15,6 +15,7 @@ extern "C" {
 
 #include "features/code/re_code.h"
 #include "features/code/re_func.h"
+#include "features/code/re_jtable.h"
 #include "features/code/re_stack.h"
 #include "features/code/re_xref.h"
 #include "features/dec/re_ir.h"
@@ -32,6 +33,7 @@ extern "C" {
 typedef struct {
     re_code_t *code;
     const re_xrefset_t *xrefs;
+    const re_vec_t *jtables; // tables re_jtable_scan already accepted, or NULL
     re_arena_t *arena;
 } re_decomp_t;
 

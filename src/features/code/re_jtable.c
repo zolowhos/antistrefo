@@ -232,3 +232,20 @@ size_t re_jtable_scan(re_code_t *c, const re_fscan_t *scan, re_arena_t *a, re_ve
     }
     return RE_VEC_LEN(out);
 }
+
+const re_jtable_t *re_jtable_for(const re_vec_t *tables, uint64_t at) {
+    size_t i;
+    if (!tables || !at)
+        return NULL;
+    for (i = 0; i < RE_VEC_LEN(tables); i++) {
+        const re_jtable_t *t = RE_VEC_PTR(tables, re_jtable_t, i);
+        if (t->at != at)
+            continue;
+        if (t->count < RE_JTABLE_MIN || t->count > RE_JTABLE_MAX)
+            return NULL;
+        if (t->width != 4 && t->width != 8)
+            return NULL;
+        return t;
+    }
+    return NULL;
+}
