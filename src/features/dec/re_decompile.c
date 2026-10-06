@@ -11,7 +11,9 @@
 #include "features/code/re_stack.h"
 #include "features/dec/re_dc_fold.h"
 #include "features/dec/re_dc_print.h"
+#include "features/dec/re_dc_proto.h"
 #include "features/flow/re_flow.h"
+#include "features/indirect/re_dc_indirect.h"
 #include "utils/mem/re_vec.h"
 #include "utils/text/re_fmt.h"
 
@@ -40,17 +42,33 @@ static void emit_call(re_dc_emit_t *e, const re_ir_op_t *op) {
     e->have_cmp = false;
     re_str_t name = re_dc_mint(e, "v", e->next_tmp++);
     re_strbuf_t args;
+    if (op->op == RE_OP_CALLIND) {
+        char ind[96];
+        if (re_dc_indirect_format(e->code, op->addr, ind, sizeof(ind))) {
+            re_dc_stmt(e, "%s = %s", (const char *)name.p, ind);
+            re_dc_bind(e, op->out, name);
+            return;
+        }
+    }
     if (op->extra & RE_FOLD_SKIP)
         return;
     call_args(e, &args);
+    {
+        char proto[96];
+        if (xr && re_dc_proto_format(xr->name, args.p ? args.p : "", proto, sizeof(proto))) {
+            if (op->extra & RE_FOLD_STMT)
+                re_dc_stmt(e, "%s", proto);
+            else
+                re_dc_stmt(e, "%s = %s", (const char *)name.p, proto);
+            re_dc_bind(e, op->out, name);
+            return;
+        }
+    }
     if (op->extra & RE_FOLD_STMT) {
         re_dc_stmt(e, "sub_%llx(%s)", (unsigned long long)op->const_val, args.p ? args.p : "");
         return;
     }
     if (xr && xr->name.p && xr->name.n) {
-        // The name is truncated rather than wrapped: a name too long to print means
-        // the import is mangled or the index is wrong, and a long line is worse than
-        // a short name that is recognisable.
         uint32_t n =
             (uint32_t)(xr->name.n < (uint32_t)(RE_DC_TEXT - 1) ? xr->name.n : RE_DC_TEXT - 1);
         re_dc_stmt(e, "%s = %.*s(%s)", (const char *)name.p, (int)n, (const char *)xr->name.p,
@@ -62,10 +80,6 @@ static void emit_call(re_dc_emit_t *e, const re_ir_op_t *op) {
     re_dc_bind(e, op->out, name);
 }
 
-// A conditional branch. The comparison that set the flags and the branch that
-// read them print as one expression, which is the whole reason a compare is
-// remembered rather than printed. A condition the writer does not decide prints
-// as the named flag condition it is, never as a guessed comparison.
 static void emit_cbranch(re_dc_emit_t *e, const re_ir_op_t *op, const re_dc_walk_t *w) {
     uint32_t lbl = re_dc_label_of(w, (uint64_t)op->const_val);
     char dest[RE_DC_TEXT];
@@ -157,13 +171,6 @@ static void emit_flow(re_dc_emit_t *e, const re_ir_op_t *op, const re_dc_walk_t 
     }
 }
 
-// The two data movements that are not a plain register copy. A load reads, and a
-// store writes; both name their address, and a store names what it wrote. When the
-// address is a stack slot the body always touches at the access's own width, the
-// cast prints nothing: the local's declared type already says it, and a reader
-// who sees "(uint64_t)local_m8" on every line has learned nothing from the cast.
-// A narrower access than the declaration keeps its cast, because a subfield write
-// is a fact about the data, not about the type.
 static void emit_move(re_dc_emit_t *e, const re_ir_op_t *op) {
     char a[RE_DC_TEXT], b[RE_DC_TEXT];
     re_str_t name = re_dc_mint(e, "v", e->next_tmp++);
@@ -230,9 +237,6 @@ static void take_const(re_dc_emit_t *e, const re_ir_op_t *op) {
     re_dc_bind(e, op->out, name);
 }
 
-// The ops with no C operator of their own: the rotations, the wide multiplies,
-// the bit counts, the byte swap, and the rep moves. One argument when the op's
-// second input was left unset, two otherwise, and none for the rep moves.
 static void emit_fn(re_dc_emit_t *e, const re_ir_op_t *op) {
     char a[RE_DC_TEXT], b[RE_DC_TEXT], c[RE_DC_TEXT];
     const char *fn = re_dc_fnop(op->op);
@@ -260,8 +264,6 @@ static void emit_fcast(re_dc_emit_t *e, const re_ir_op_t *op) {
     re_dc_bind(e, op->out, name);
 }
 
-// setcc. The pending flag writer resolves the condition when it can; otherwise
-// the named flag condition prints, which is honest and still readable.
 static void emit_setcc(re_dc_emit_t *e, const re_ir_op_t *op) {
     re_str_t name = re_dc_mint(e, "v", e->next_tmp++);
     char expr[160];
@@ -272,7 +274,6 @@ static void emit_setcc(re_dc_emit_t *e, const re_ir_op_t *op) {
     re_dc_bind(e, op->out, name);
 }
 
-// cmovcc: a select between the destination's current value and the source.
 static void emit_select(re_dc_emit_t *e, const re_ir_op_t *op) {
     char a[RE_DC_TEXT], b[RE_DC_TEXT];
     re_str_t name = re_dc_mint(e, "v", e->next_tmp++);

@@ -166,6 +166,28 @@ if(MSVC)
 endif()
 add_test(NAME dc_abi COMMAND re_test_dc_abi)
 
+# Import prototypes. A known name prints with its argument count; an unknown
+# call is left alone.
+add_executable(re_test_dc_proto test_dc_proto.c)
+target_link_libraries(re_test_dc_proto PRIVATE re_core re_utils re_flags)
+if(MSVC)
+    set_property(TARGET re_test_dc_proto
+        PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_definitions(re_test_dc_proto PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+add_test(NAME dc_proto COMMAND re_test_dc_proto)
+
+# Indirect calls. One reaching lea prints the function; a slot with no table
+# stays slot_0x.
+add_executable(re_test_dc_indirect test_dc_indirect.c)
+target_link_libraries(re_test_dc_indirect PRIVATE re_core re_utils re_flags)
+if(MSVC)
+    set_property(TARGET re_test_dc_indirect
+        PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_definitions(re_test_dc_indirect PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+add_test(NAME dc_indirect COMMAND re_test_dc_indirect)
+
 # The flow suite is separate because a transform that silently changed control
 # flow, or folded a value the machine never held, still prints plausible C.
 # Only assertions on hand built IR with known answers can tell a recovery pass
