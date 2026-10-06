@@ -155,10 +155,14 @@ static void test_prologue(void) {
 }
 
 static void test_registry(void) {
-    RE_CHECK_EQ_U(re_disasm_arch_count(), 1);
+    RE_CHECK_EQ_U(re_disasm_arch_count(), 2);
     RE_CHECK(re_disasm_arch_name(0) != NULL);
-    RE_CHECK(re_disasm_arch_name(1) == NULL);
+    RE_CHECK(re_disasm_arch_name(1) != NULL);
+    RE_CHECK(re_disasm_arch_name(2) == NULL);
     RE_CHECK(re_disasm_find("x86-64") == g_x64);
+    RE_CHECK(re_disasm_find("x86") != NULL);
+    RE_CHECK(re_disasm_find("x86") != g_x64);
+    RE_CHECK(re_disasm_find("x86")->mode == 32);
     RE_CHECK(re_disasm_find("nope") == NULL);
     RE_CHECK(re_disasm_find("") == NULL);
     RE_CHECK(g_x64 != NULL);

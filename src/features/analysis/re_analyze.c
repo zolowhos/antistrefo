@@ -335,7 +335,10 @@ bool re_analysis_open(re_analysis_t *an, re_arena_t *a, const char *path) {
         // degrades to no code panes, it is never decoded by the wrong backend.
         // The context is still bound. Regions translates addresses through it, and
         // skipping init here left pe NULL, which is what crashed analyze on x86.
-        const re_disasm_t *dis = an->pe.machine == 0x8664 ? re_disasm_find("x86-64") : NULL;
+        const char *arch = an->pe.machine == 0x8664   ? "x86-64"
+                           : an->pe.machine == 0x014c ? "x86"
+                                                      : NULL;
+        const re_disasm_t *dis = arch ? re_disasm_find(arch) : NULL;
         an->has_code = re_code_init(&an->code, an->file.whole, &an->pe, dis, a);
     }
     for (int i = 0; i < RE_PASS_COUNT; i++)

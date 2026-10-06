@@ -14,6 +14,7 @@
 static const re_disasm_t *const kBackends[] = {
 #ifdef RE_ENABLE_DISASM
     &re_disasm_x64,
+    &re_disasm_x86,
 #endif
 };
 

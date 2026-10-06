@@ -103,14 +103,14 @@ static bool is_prologue_insn(const x64_insn_t *in) {
         if (in->modrm == 0xEC)
             return true; // sub rsp, imm
     }
-    if (in->opcode == 0x8B && in->modrm == 0xE5)
-        return true; // mov rbp, rsp
+    if (in->opcode == 0x8B && (in->modrm == 0xE5 || in->modrm == 0xEC))
+        return true; // mov rbp, rsp, or mov ebp, esp
     if (in->opcode == 0x89 && in->modrm == 0xE5)
         return true; // mov rsp, rbp, the epilogue half
     if (in->opcode == 0xC9)
         return true; // leave
-    return is_push(in, 5) || is_push(in, 3) || is_push(in, 12) || is_push(in, 13) ||
-           is_push(in, 14) || is_push(in, 15);
+    return is_push(in, 5) || is_push(in, 3) || is_push(in, 6) || is_push(in, 7) ||
+           is_push(in, 12) || is_push(in, 13) || is_push(in, 14) || is_push(in, 15);
 }
 
 // Map an x86 opcode onto the arch neutral branch, call and return flags. An
@@ -312,6 +312,19 @@ static size_t x64_vt_lower(void *ctx, const re_insn_t *insn, re_ir_func_t *f, re
     (void)ctx;
     return x64_lower(insn, f, a);
 }
+
+const re_disasm_t re_disasm_x86 = {
+    NULL,
+    "x86",
+    32,
+    x64_vt_decode,
+    x64_vt_lower,
+    x64_vt_reg_name,
+    x64_vt_reg_size,
+    x64_vt_prologue,
+    x64_vt_trfunc,
+    x64_vt_render,
+};
 
 const re_disasm_t re_disasm_x64 = {
     NULL,

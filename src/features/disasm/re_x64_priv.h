@@ -140,6 +140,7 @@ bool x64_is_endbr(const uint8_t *p, size_t n);
 
 // The vtable, wired up in re_x64_ops.c.
 extern const struct re_disasm re_disasm_x64;
+extern const struct re_disasm re_disasm_x86;
 
 // The name of an instruction, in re_x64_name.c, and the questions the renderer asks
 // about the shape of its operand list before it prints one. All of them read the

@@ -18,6 +18,8 @@ static const char *backend_for(uint16_t machine) {
     switch (machine) {
         case 0x8664:
             return "x86-64";
+        case 0x014c:
+            return "x86";
         default:
             return NULL;
     }
