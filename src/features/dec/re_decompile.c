@@ -75,8 +75,8 @@ static void emit_call(re_dc_emit_t *e, const re_ir_op_t *op) {
         re_dc_stmt(e, "%s = %.*s(%s)", (const char *)name.p, (int)n, (const char *)xr->name.p,
                    args.p);
     } else {
-        re_dc_stmt(e, "%s = call_0x%llx(%s)", (const char *)name.p,
-                   (unsigned long long)op->const_val, args.p);
+        re_dc_stmt(e, "%s = sub_%llx(%s)", (const char *)name.p, (unsigned long long)op->const_val,
+                   args.p);
     }
     re_dc_bind(e, op->out, name);
 }
