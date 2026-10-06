@@ -81,6 +81,7 @@ int re_cmd_decompile(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_names_stat_t nm;
     build_xrefs_and_names(ctx, &pe, &code, &scan, &xs, &nm);
     re_stack_analyze(&code, fn, ctx->arena, &st);
+    re_stack_apply_image(&st, &pe);
     d.code = &code;
     d.xrefs = &xs;
     d.arena = ctx->arena;

@@ -14,6 +14,7 @@ extern "C" {
 
 #include "features/code/re_code.h"
 #include "features/code/re_func.h"
+#include "features/pe/re_pe.h"
 #include "utils/mem/re_arena.h"
 #include "utils/mem/re_vec.h"
 
@@ -44,6 +45,8 @@ typedef struct {
     uint32_t n_slots;
     bool uses_frame_ptr; // rbp is set up, so locals are rbp relative
     bool tail_call;      // ends in a jump rather than a return
+    bool homed;          // the four argument registers were homed once
+    bool ret_xmm;        // the return is in xmm0, not rax
 } re_stack_t;
 
 // Analyse one function. The walk is linear from the entry, which is enough for a
@@ -58,6 +61,17 @@ const char *re_cc_name(uint8_t cc);
 // "?" when there is no such argument or the convention is unknown. Positions are what
 // re_stack_t::arg_regs holds, so this is how a position becomes a register name.
 const char *re_cc_arg_reg_name(uint8_t cc, uint32_t pos);
+
+// True when this PE imports ntoskrnl, hal, or FLTMGR. A driver is never SysV.
+bool re_stack_image_ms64(const re_pe_t *pe);
+
+// Force ms64 on that image. Callee-saved registers are dropped from the parameter
+// list, and the shadow slots rsp+8 through rsp+0x20 are not locals. A PE with no
+// such import is left as the scorer reported it, including SysV.
+void re_stack_apply_image(re_stack_t *out, const re_pe_t *pe);
+
+// The return type the signature prints. xmm0 is a double; everything else is rax.
+const char *re_cc_ret_type(const re_stack_t *st);
 #ifdef __cplusplus
 }
 #endif

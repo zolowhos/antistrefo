@@ -347,7 +347,7 @@ static void emit_params(re_dc_emit_t *e, const re_stack_t *st) {
     for (uint32_t i = 0; i < nargs; i++) {
         if (i)
             re_strbuf_puts(e->o, ", ");
-        re_strbuf_puts(e->o, "uint64_t ");
+        re_strbuf_puts(e->o, re_cc_ret_type(st));
         re_strbuf_puts(e->o, re_cc_arg_reg_name(st->cc, st->arg_regs[i]));
     }
     re_strbuf_puts(e->o, ") {\n");

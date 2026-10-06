@@ -155,6 +155,17 @@ if(MSVC)
 endif()
 add_test(NAME dc_fold COMMAND re_test_dc_fold)
 
+# The Microsoft x64 force. A kernel import must not be reported as SysV, and a
+# saved rbx must not become a parameter.
+add_executable(re_test_dc_abi test_dc_abi.c)
+target_link_libraries(re_test_dc_abi PRIVATE re_core re_utils re_flags)
+if(MSVC)
+    set_property(TARGET re_test_dc_abi
+        PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_definitions(re_test_dc_abi PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+add_test(NAME dc_abi COMMAND re_test_dc_abi)
+
 # The flow suite is separate because a transform that silently changed control
 # flow, or folded a value the machine never held, still prints plausible C.
 # Only assertions on hand built IR with known answers can tell a recovery pass

@@ -55,7 +55,7 @@ static void emit_flags(re_jw_t *w, uint32_t flags) {
 }
 
 static void emit_func(re_ctx_t *ctx, re_code_t *code, re_jw_t *w, const re_func_t *f, size_t edges,
-                      const re_xrefset_t *xs) {
+                      const re_xrefset_t *xs, const re_pe_t *pe) {
     re_stack_t st;
     re_jw_obj(w);
     re_jw_khex(w, "va", f->va, 16);
@@ -81,6 +81,7 @@ static void emit_func(re_ctx_t *ctx, re_code_t *code, re_jw_t *w, const re_func_
     if (f->dispatch)
         re_jw_khex(w, "dispatch", f->dispatch, 16);
     re_stack_analyze(code, f, ctx->arena, &st);
+    re_stack_apply_image(&st, pe);
     re_jw_kcstr(w, "cc", re_cc_name(st.cc));
     re_jw_ku64(w, "params", st.n_params);
     re_jw_ku64(w, "locals", st.n_locals);
@@ -144,7 +145,7 @@ int re_cmd_funcs(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     size_t total = RE_VEC_LEN(&scan.funcs);
     for (size_t i = ctx->offset; i < total && shown < ctx->limit; i++, shown++) {
         const re_func_t *fn = re_func_at(&scan, i);
-        emit_func(ctx, &code, &w, fn, re_func_edge_count(&scan, fn), &xs);
+        emit_func(ctx, &code, &w, fn, re_func_edge_count(&scan, fn), &xs, &pe);
     }
     re_jw_arr_end(&w);
     re_jw_ku64(&w, "total", total);

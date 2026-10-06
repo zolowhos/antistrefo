@@ -6,6 +6,8 @@
 //           full data flow analysis, and a miss costs a parameter, not a wrong one.
 #include "features/code/re_stack.h"
 
+#include "utils/text/re_str.h"
+
 // Windows passes the first four integer arguments in rcx, rdx, r8, r9; SysV uses
 // six and starts at rdi. The two overlap in the middle, which is why a function
 // that reads rcx and rdi is ambiguous and is reported as such.
@@ -194,6 +196,8 @@ void re_stack_analyze(re_code_t *c, const re_func_t *f, re_arena_t *a, re_stack_
     out->frame_size = f->frame_size;
     out->uses_frame_ptr = false;
     out->tail_call = (f->flags & RE_FUNC_THUNK) != 0;
+    out->homed = false;
+    out->ret_xmm = false;
     while (va < f->va + f->size) {
         re_insn_t in;
         unsigned map;
@@ -243,4 +247,89 @@ const char *re_cc_arg_reg_name(uint8_t cc, uint32_t pos) {
     if (cc == RE_CC_SYSV)
         return pos < 6u ? kSysvNames[pos] : "?";
     return "?";
+}
+
+static bool dll_stem(re_str_t dll, const char *want) {
+    size_t i;
+    size_t n = dll.n;
+    if (n >= 4 && (dll.p[n - 4] == '.'))
+        n -= 4;
+    for (i = 0; want[i]; i++) {
+        char c = i < n ? dll.p[i] : 0;
+        char w = want[i];
+        if (c >= 'A' && c <= 'Z')
+            c = (char)(c - 'A' + 'a');
+        if (c != w)
+            return false;
+    }
+    return i == n;
+}
+
+bool re_stack_image_ms64(const re_pe_t *pe) {
+    size_t i;
+    if (!pe || !pe->valid || !pe->pe32plus)
+        return false;
+    // A Windows image is Microsoft x64 whether it is a driver or a crackme.
+    // Subsystem 1 is native, 2 is GUI, 3 is console. Anything else keeps the
+    // scorer's answer, so a header with no Windows subsystem is not forced.
+    if (pe->subsystem == 1 || pe->subsystem == 2 || pe->subsystem == 3)
+        return true;
+    for (i = 0; i < RE_VEC_LEN(&pe->imports); i++) {
+        const re_pe_imp_t *im = RE_VEC_PTR(&pe->imports, re_pe_imp_t, i);
+        if (dll_stem(im->dll, "ntoskrnl") || dll_stem(im->dll, "hal") ||
+            dll_stem(im->dll, "fltmgr"))
+            return true;
+    }
+    return false;
+}
+
+// SysV positions 2..5 are rdx, rcx, r8, r9. rdi and rsi are callee-saved on
+// Windows and must not survive the force.
+static bool sysv_to_ms(uint8_t pos, uint8_t *ms) {
+    static const uint8_t kMap[6] = {0xFF, 0xFF, 1, 0, 2, 3};
+    if (pos >= 6 || kMap[pos] == 0xFF)
+        return false;
+    *ms = kMap[pos];
+    return true;
+}
+
+static void drop_shadow(re_stack_t *out) {
+    uint32_t i, n = 0;
+    for (i = 0; i < out->n_slots && i < RE_SLOT_MAX; i++) {
+        int32_t d = out->slots[i];
+        if (d == 8 || d == 0x10 || d == 0x18 || d == 0x20)
+            continue;
+        out->slots[n++] = d;
+    }
+    out->n_slots = n;
+    out->n_locals = n;
+    out->homed = true;
+}
+
+void re_stack_apply_image(re_stack_t *out, const re_pe_t *pe) {
+    uint8_t kept[4];
+    uint32_t n = 0, i;
+    if (!out || !re_stack_image_ms64(pe))
+        return;
+    for (i = 0; i < out->n_params && i < RE_CC_MAX_ARGS; i++) {
+        uint8_t pos = out->arg_regs[i];
+        if (out->cc == RE_CC_SYSV) {
+            if (!sysv_to_ms(pos, &pos))
+                continue;
+        } else if (pos >= 4) {
+            continue;
+        }
+        kept[n++] = pos;
+    }
+    out->cc = RE_CC_MS64;
+    out->n_params = n;
+    for (i = 0; i < n; i++)
+        out->arg_regs[i] = kept[i];
+    drop_shadow(out);
+}
+
+const char *re_cc_ret_type(const re_stack_t *st) {
+    if (st && st->ret_xmm)
+        return "double ";
+    return "uint64_t ";
 }
