@@ -128,6 +128,15 @@ static void check_unwind_bounds_function(re_code_t *code, const re_fscan_t *scan
         return;
     RE_CHECK(f->flags & RE_FUNC_UNWIND);
     RE_CHECK_EQ_HEX(f->size, CODE_FN1_END - TEXT_RVA);
+    // The next unwind entry is the filter. It is its own function, and the
+    // parent's size stops at the compiler end rather than swallowing it.
+    const re_func_t *filter =
+        re_func_index_of(scan, code->base + CODE_FN1_END) >= 0
+            ? re_func_at(scan, (size_t)re_func_index_of(scan, code->base + CODE_FN1_END))
+            : NULL;
+    RE_CHECK(filter != NULL && filter != f);
+    if (filter)
+        RE_CHECK(filter->va >= f->va + f->size);
 }
 
 // The byte test that finds prologue shaped code cannot tell a "sub rsp, 0x20" at a

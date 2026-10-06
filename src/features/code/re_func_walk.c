@@ -161,6 +161,12 @@ static bool mid_insn(const re_code_t *c, uint64_t va) {
 // A transfer through a RIP relative operand names its target too. That form is how
 // a driver calls a Windows API, through the import slot, and calling it indirect
 // would throw away the single most useful fact about the reference.
+static bool other_unwind(const walk_t *w, const re_func_t *f, uint64_t target) {
+    re_pe_unwind_t u;
+    uint32_t rva = (uint32_t)(target - w->code->base);
+    return re_pe_unwind_covering(w->code->pe, rva, &u) && w->code->base + u.begin != f->va;
+}
+
 static void take_edge(walk_t *w, fnwalk_t *s, const re_insn_t *in, re_func_t *f) {
     uint8_t kind = RE_EDGE_NONE;
     uint64_t target = in->has_target ? in->target : (in->has_mem ? in->mem : 0);
@@ -207,7 +213,7 @@ static void take_edge(walk_t *w, fnwalk_t *s, const re_insn_t *in, re_func_t *f)
         return;
     }
     if (!re_code_covered(w->code, target, 1))
-        re_walk_push(w->a, &s->blocks, target);
+        re_walk_push(w->a, other_unwind(w, f, target) ? w->queue : &s->blocks, target);
     // The bytes are claimed and the target is not on a boundary. Inside this
     // function's own body that is a branch into a mis-decoded stretch, which is a
     // decode problem; outside it two records share bytes, which is the overlap
@@ -274,6 +280,8 @@ static void walk_block(walk_t *w, fnwalk_t *s, re_func_t *f, uint64_t va) {
     // The extent so far, so a transfer can tell a branch into this function's own
     // body from one into bytes another function claimed.
     f->size = (uint32_t)(s->hi - f->va);
+    if (s->end > f->va)
+        f->size = (uint32_t)(s->end - f->va);
     if (f->n_insns <= 12 && f->frame_size == 0 && sub_rsp(&in, &frame))
         f->frame_size = frame;
     if (in.is_return)
@@ -282,7 +290,12 @@ static void walk_block(walk_t *w, fnwalk_t *s, re_func_t *f, uint64_t va) {
     if (halt)
         s->halt = va + in.size;
     take_edge(w, s, &in, f);
-    if (!in.is_return && halt != 2u && !(in.is_branch && !in.is_conditional))
+    // A declared end beats the first ret. The bytes after it belong to this
+    // function until the compiler's end, and stopping here is how a filter
+    // that has its own unwind entry gets merged into the parent.
+    if (s->end && va + in.size < s->end && halt != 2u)
+        re_walk_push(w->a, &s->blocks, va + in.size);
+    else if (!in.is_return && halt != 2u && !(in.is_branch && !in.is_conditional))
         re_walk_push(w->a, &s->blocks, va + in.size);
 }
 
