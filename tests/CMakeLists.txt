@@ -133,6 +133,28 @@ if(MSVC)
 endif()
 add_test(NAME score COMMAND re_test_score)
 
+# The decompiler corpus score. A missing fixture skips, so the suite is green
+# before the ten files are mounted, and a present one prints hits over records.
+add_executable(re_test_dc_score test_dc_score.c)
+target_link_libraries(re_test_dc_score PRIVATE re_core re_utils re_flags)
+if(MSVC)
+    set_property(TARGET re_test_dc_score
+        PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_definitions(re_test_dc_score PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+add_test(NAME dc_score COMMAND re_test_dc_score)
+
+# The expression folder. A prologue that is only saves and copies must print as
+# two calls and a return, and a folded displacement must stay a load.
+add_executable(re_test_dc_fold test_dc_fold.c)
+target_link_libraries(re_test_dc_fold PRIVATE re_core re_utils re_flags)
+if(MSVC)
+    set_property(TARGET re_test_dc_fold
+        PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_definitions(re_test_dc_fold PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+add_test(NAME dc_fold COMMAND re_test_dc_fold)
+
 # The flow suite is separate because a transform that silently changed control
 # flow, or folded a value the machine never held, still prints plausible C.
 # Only assertions on hand built IR with known answers can tell a recovery pass
