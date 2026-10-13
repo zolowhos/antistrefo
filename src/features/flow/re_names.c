@@ -184,12 +184,6 @@ static bool eh_entry(const re_pe_t *pe, const re_pe_unwind_t *u, uint64_t at, re
     return true;
 }
 
-// A four byte read off the mapped image at a raw file offset.
-static uint32_t rd_at(const re_pe_t *pe, uint64_t off) {
-    return (uint32_t)pe->img.p[off] | ((uint32_t)pe->img.p[off + 1] << 8) |
-           ((uint32_t)pe->img.p[off + 2] << 16) | ((uint32_t)pe->img.p[off + 3] << 24);
-}
-
 // The C++ EH scope table, decoded from the unwind metadata. The header: byte 0
 // carries the version and the three flags, so a handler is declared by a non
 // zero flag nibble; the count of unwind codes is the 16 bit word at +2; a

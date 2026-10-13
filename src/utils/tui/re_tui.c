@@ -2,6 +2,9 @@
 // Module: util (C11).
 // Owns: the output policy, the width, the colour styles, and the flat report elements.
 // Depends: re_tui.h. Reads the environment and asks the OS whether stdout is a terminal.
+#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#    define _POSIX_C_SOURCE 200809L
+#endif
 #include "utils/tui/re_tui.h"
 
 #include <stdlib.h>
@@ -17,6 +20,7 @@
 #    define RE_ISATTY(fd) _isatty(fd)
 #    define RE_FILENO(f) _fileno(f)
 #else
+#    include <stdio.h>
 #    include <unistd.h>
 #    include <sys/ioctl.h>
 #    define RE_ISATTY(fd) isatty(fd)
@@ -113,7 +117,7 @@ void re_tui_term_size(uint16_t *rows, uint16_t *cols) {
         for (int fd = 1; fd <= 2; fd++) {
             if (ioctl(fd, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0) {
                 h = (int)ws.ws_row;
-                if ((int)w < RE_TUI_MIN_WIDTH && (int)ws.ws_col >= RE_TUI_MIN_WIDTH)
+                if (w < (int)RE_TUI_MIN_WIDTH && (int)ws.ws_col >= (int)RE_TUI_MIN_WIDTH)
                     w = ws.ws_col > 200 ? (uint16_t)200 : (uint16_t)ws.ws_col;
                 break;
             }

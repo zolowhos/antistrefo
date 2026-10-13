@@ -1,18 +1,18 @@
 ---
-description: MSVC toolchain, presets, and sanitizer limits on this machine
+description: Clang/LLVM toolchain, presets, and sanitizer limits
 alwaysApply: true
 ---
-
 # Build
 
-Ship with MSVC `/MT /O2 /GL /LTCG`. MinGW is a dev fallback only. Presets in `CMakePresets.json`: `msvc-debug`, `msvc-release`.
+Ship with **Clang/LLVM** on Windows and Linux. Release: `-O2` + LTO (`CMAKE_INTERPROCEDURAL_OPTIMIZATION`). On Windows with the MSVC SDK, prefer `clang-cl` + static CRT (`MultiThreaded`). Presets in `CMakePresets.json`: `clang-release`, `clang-debug` (primary); `clang-cl-release` / `clang-cl-debug` on Windows; `clang-asan` for ASan.
 
-- MSVC 14.51.36231, VS 18 Community. Run `vcvarsall.bat x64` before a build.
-- Windows SDK 10.0.26100.0 / 10.0.28000.0. CMake 4.3.1, Ninja 1.13.2.
-- clang-format 20.1.8 and clang-tidy live in `VC/Tools/Llvm/x64/bin`. clang-tidy is advisory.
-- MSVC `/fsanitize=address` works. MinGW gcc 15.2.0 has no `libc.a` and no sanitizer runtime (`libubsan`, `libasan`). There is no UBSan. Defences are `/W4 /WX`, a clean MinGW `-Wall -Wextra -Werror` build, and the truncation sweep.
-- Absent on this machine: Rust, the clang compiler, vcpkg, pkg-config, WSL, and an ELF cross compiler.
+- Clang/LLVM is the primary compiler. Gate on Linux: `cmake --preset clang-release` then build and `ctest --preset clang-release`.
+- Windows: install LLVM (or the VS LLVM tools) and run from a shell where `clang` / `clang-cl` is on PATH. `vcvarsall.bat x64` is still needed for `clang-cl` against the Windows SDK.
+- Legacy presets only (not the ship path): `msvc-release` (`/MT /O2 /GL /LTCG`), `msvc-debug`, `msvc-asan`. Second-compiler check: `gcc-debug` (alias `mingw-debug`).
+- clang-format and clang-tidy: system install on Linux; on Windows often under `VC/Tools/Llvm/x64/bin`. clang-tidy is advisory.
+- ASan: `clang-asan` (`-fsanitize=address`). Legacy `msvc-asan` remains for MSVC-only machines.
 - CMake 4.x errors on `cmake_minimum_required` below 3.5. Keep `CMAKE_POLICY_VERSION_MINIMUM` at 3.5.
 - Do not use a hidden test preset that has no `configurePreset`. CMake reports that as `Invalid preset: "base"`.
 - CMake presets reject unknown root keys, so `CMakePresets.json` cannot carry a banner.
 - No ELF cross compiler. `scripts/gen_fixtures.py` must synthesize ELF. That is a prerequisite of the format fixtures, not optional.
+- Product defaults: `RE_ENABLE_DISASM=ON`. When Capstone is wired (`RE_ENABLE_CAPSTONE`), it defaults ON whenever disasm is ON.

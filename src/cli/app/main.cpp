@@ -63,21 +63,6 @@ int report_error(const re_err_t &err) {
     return re_err_exit_code(err.code);
 }
 
-// Run the interactive shell. Its arena outlives the whole session, unlike the
-// per command arena below, because the remembered file has to survive between lines.
-int run_shell() {
-    re_arena_t arena;
-    re_err_t err{};
-    re_ctx_t ctx{};
-    re_arena_init(&arena, 256u * 1024u);
-    err.code = RE_OK;
-    ctx.arena = &arena;
-    ctx.err = &err;
-    int rc = re_shell_run(&ctx);
-    re_arena_free(&arena);
-    return rc;
-}
-
 // Windows Terminal renders the box drawing characters only under a UTF-8 output code
 // page. A console inherited from cmd is usually CP437, and UTF-8 bytes decoded as CP437
 // come out as mojibake, which is what the frame turns into if this is not done.

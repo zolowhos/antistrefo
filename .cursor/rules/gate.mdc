@@ -7,10 +7,11 @@ alwaysApply: true
 
 Run this before claiming anything works. The style test fails the build.
 
-    powershell -NoProfile -ExecutionPolicy Bypass -File scripts\format.ps1
-    python scripts\check.py .
-    cmake --build --preset msvc-release
-    ctest --preset msvc-release
+ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\format.ps1
+ # Linux: clang-format -n --Werror --style=file $(git ls-files 'src/**/*.[ch]' 'src/**/*.cpp')
+ python scripts\check.py .
+ cmake --build --preset clang-release
+ ctest --preset clang-release
 
 | Rule | Requirement |
 |---|---|

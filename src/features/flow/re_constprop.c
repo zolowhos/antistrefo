@@ -258,7 +258,7 @@ static void try_fold(env_t *e, re_ir_op_t *op) {
 // branch, both its operands are known, and the condition folds to a fact.
 // The branch becomes the unconditional jump it always ran as, or nothing at
 // all when the taken side never executes.
-static void try_pred(env_t *e, re_ir_op_t *cmp, re_ir_op_t *br) {
+static void try_pred(env_t *e, const re_ir_op_t *cmp, re_ir_op_t *br) {
     int64_t a, b;
     bool res;
     unsigned cbr;
@@ -297,7 +297,7 @@ void re_flow_constprop(re_ir_func_t *f, re_arena_t *a, re_flow_stat_t *st) {
             // branch: the pair is adjacency, not an interval, so nothing can
             // write flags in between and be ignored.
             if (op->op == RE_OP_CBRANCH)
-                try_pred(&e, (re_ir_op_t *)prev, op);
+                try_pred(&e, prev, op);
             prev = op;
         }
     }

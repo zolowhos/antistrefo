@@ -54,19 +54,23 @@ does not, nothing is lost.
 
 ## Building
 
-Needs CMake 3.20+ and a C11 compiler. Visual Studio 2022 and MinGW are both wired up.
+Needs CMake 3.25+, Ninja, and **Clang/LLVM** (C11 + C++17). That is the primary
+toolchain on Windows and Linux.
 
 ```console
-$ cmake --preset msvc-release          # x64, static CRT, LTO
-$ cmake --build --preset msvc-release
-$ ctest --preset msvc-release
+$ cmake --preset clang-release         # -O2 + LTO; RE_ENABLE_DISASM=ON
+$ cmake --build --preset clang-release
+$ ctest --preset clang-release
 ```
 
-Presets: `msvc-debug`, `msvc-release`, `msvc-asan`, `mingw-debug`. The native
-x86-64 decoder needs only a C11 compiler. With `RE_ENABLE_CAPSTONE` (default ON
-when disasm is enabled), CMake fetches Capstone 5.0.3 for ARM-64 behind
-`re_disasm`. Use `-DRE_ENABLE_DISASM=OFF` for a parse-only build, or
-`-DRE_ENABLE_CAPSTONE=OFF` to keep native x86 without Capstone.
+On Windows with the MSVC SDK, prefer `clang-cl-release` (static CRT). Primary
+presets: `clang-release`, `clang-debug`, `clang-asan`, `clang-cl-release`,
+`clang-cl-debug`. Second compiler: `gcc-debug`. Legacy only (not the ship path):
+`msvc-release`, `msvc-debug`, `msvc-asan`. The native x86-64 decoder needs only a
+C11 compiler. With `RE_ENABLE_CAPSTONE` (default ON when disasm is enabled),
+CMake fetches Capstone 5.0.3 for ARM-64 behind `re_disasm`. Use
+`-DRE_ENABLE_DISASM=OFF` for a parse-only build, or `-DRE_ENABLE_CAPSTONE=OFF`
+to keep native x86 without Capstone.
 
 ## Commands
 
@@ -155,8 +159,8 @@ terminal stdio lives on.
 ```console
 $ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\format.ps1
 $ python scripts\check.py .
-$ cmake --build --preset msvc-release
-$ ctest  --preset msvc-release
+$ cmake --build --preset clang-release
+$ ctest  --preset clang-release
 ```
 
 The gate is mechanical and it is not advisory. Twelve targets, 47,656 checks, and a set

@@ -2,13 +2,16 @@
 // Module: test (C11).
 // Owns: column counts, clipping, boxes, panels, and zone hover and click.
 // Depends: re_core through re_tui.h. Every case here is one where a wrong answer
-// looks plausible on screen, so the numbers are pinned rather than eyeballed.
+#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#    define _POSIX_C_SOURCE 200809L
+#endif
 #include "re_test.h"
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "utils/mem/re_arena.h"
@@ -19,12 +22,27 @@
 #include "utils/tui/re_tui.h"
 #include "utils/tui/re_ui.h"
 
-// This suite is its own binary, so it owns its counters.
 int re_test_count = 0;
 int re_test_fail = 0;
 
-// A string comparison that says what differed, because a layout test that only says
-// "failed" is a test you have to re-run with a debugger to act on.
+static void test_putenv(const char *kv) {
+#if defined(_WIN32)
+    (void)_putenv(kv);
+#else
+    char name[64];
+    size_t i = 0;
+    for (; kv[i] && kv[i] != '=' && i + 1u < sizeof(name); i++)
+        name[i] = kv[i];
+    name[i] = '\0';
+    if (kv[i] != '=')
+        return;
+    if (kv[i + 1u])
+        setenv(name, kv + i + 1u, 1);
+    else
+        unsetenv(name);
+#endif
+}
+
 #define CHECK_STR(got, want)                                                    \
     do {                                                                        \
         re_test_count++;                                                        \
@@ -54,7 +72,6 @@ static const char *out_of(const rig_t *r) {
     return r->out.p ? r->out.p : "";
 }
 
-// Counting columns is the one thing every other measurement depends on, so it is
 // pinned for the cases that would otherwise shift a box silently.
 static void test_cols(void) {
     RE_CHECK_EQ_U(re_tui_cols(""), 0);
@@ -71,7 +88,6 @@ static void test_cols(void) {
     RE_CHECK_EQ_U(re_tui_cols_span("\xe2\x94", 2), 1);
 }
 
-// Clipping has to cut on a character boundary, or the output stops being decodable
 // and the whole report after it is affected.
 static void test_clip(re_arena_t *a) {
     rig_t r;
@@ -98,8 +114,6 @@ static void test_clip(re_arena_t *a) {
     RE_CHECK_EQ_U(re_tui_cols(out_of(&r)), 4);
 }
 
-// Every line of a composed row must be exactly the terminal width. A ragged right
-// edge is the single most visible way for a framed report to look broken, and it is
 // invisible in a test that only checks the text.
 static void test_compose_even(re_arena_t *a) {
     static const uint16_t kWidths[] = {40, 60, 80, 100, 120, 200};
@@ -138,7 +152,6 @@ static void test_compose_even(re_arena_t *a) {
     }
 }
 
-// The ascii fallback must produce the same geometry. A box drawn with plus and minus
 // is uglier but it has to line up, or the fallback is not a fallback.
 static void test_ascii_fallback(re_arena_t *a) {
     rig_t r;
@@ -161,9 +174,6 @@ static void test_ascii_fallback(re_arena_t *a) {
     }
 }
 
-// Colour is the difference between a report and a wall of escapes, so it has to be
-// absent when it is not asked for, and every style has to close itself. The styled
-// text lands in the panel body, because a panel is filled before it is composed.
 static void test_color(re_arena_t *a) {
     rig_t r;
     re_panel_t p;
@@ -182,10 +192,6 @@ static void test_color(re_arena_t *a) {
     RE_CHECK(strstr(body, "key") < strstr(body, "val"));
 }
 
-// The display width of a composed line, ignoring the escapes. They are zero width by
-// definition, so measuring them would say the box is far wider than the terminal and
-// every assertion about geometry would be meaningless once colour is on. The content is
-// stripped first and then measured, because the box characters are three bytes each and
 // counting bytes would over-report the width threefold.
 static size_t visible_cols(const char *s, size_t len) {
     char plain[256];
@@ -204,8 +210,6 @@ static size_t visible_cols(const char *s, size_t len) {
     return re_tui_cols_span(plain, n);
 }
 
-// A styled report has to be exactly as wide as an unstyled one. This is the case
-// where a colour implementation quietly breaks the layout, and it cannot be seen in
 // the plain text path at all.
 static void test_styled_geometry(re_arena_t *a) {
     rig_t r;
@@ -231,45 +235,40 @@ static void test_env(void) {
     // The environment is consulted, not cached, so a test can set it and clear it.
     // The convention is that the variable being present at all is what counts, which
     // is why an empty value is used to clear one here rather than deleting the name.
-    _putenv("NO_COLOR=1");
+    test_putenv("NO_COLOR=1");
     RE_CHECK(!re_tui_want_color());
-    _putenv("NO_COLOR=");
+    test_putenv("NO_COLOR=");
     RE_CHECK(re_tui_want_color());
-    _putenv("RE_TUI_ASCII=1");
+    test_putenv("RE_TUI_ASCII=1");
     RE_CHECK(!re_tui_want_unicode());
-    _putenv("RE_TUI_ASCII=");
+    test_putenv("RE_TUI_ASCII=");
     // With no terminal and no override, the answer is no: this suite runs under a pipe,
     // and claiming the box characters would be a lie about where the output is going.
     RE_CHECK(!re_tui_want_unicode());
     // The override exists for exactly the case the automatic answer cannot cover, which
     // is a console that reports a code page it does not actually use.
-    _putenv("RE_TUI_UNICODE=1");
+    test_putenv("RE_TUI_UNICODE=1");
     RE_CHECK(re_tui_want_unicode());
-    _putenv("RE_TUI_UNICODE=");
-    // A pipe is never a terminal, whatever the overrides say about the encoding.
+    test_putenv("RE_TUI_UNICODE=");
     RE_CHECK(!re_tui_console_utf8());
-    _putenv("COLUMNS=100");
+    test_putenv("COLUMNS=100");
     RE_CHECK_EQ_U(re_tui_term_width(), 100);
-    _putenv("COLUMNS=5");
+    test_putenv("COLUMNS=5");
     RE_CHECK_EQ_U(re_tui_term_width(), RE_TUI_DEFAULT_WIDTH);
-    _putenv("COLUMNS=1000");
+    test_putenv("COLUMNS=1000");
     RE_CHECK_EQ_U(re_tui_term_width(), 200);
-    _putenv("COLUMNS=");
+    test_putenv("COLUMNS=");
     RE_CHECK_EQ_U(re_tui_term_width(), RE_TUI_DEFAULT_WIDTH);
 }
 
-// The header bar is inverted across its whole width, so the padding has to be inside
-// the styled run. A bar that inverts only the text is the classic half done look.
 static void test_header(re_arena_t *a) {
     rig_t r;
     rig_init(&r, a, 40, false, true);
     re_tui_header(&r.t, "left", "right");
-    // The trailing newline is not part of the bar, so the text is compared whole.
     CHECK_STR(out_of(&r), "left                               right\n");
     rig_init(&r, a, 40, true, true);
     re_tui_header(&r.t, "left", "right");
     const char *s = out_of(&r);
-    // The opening escape comes before the padding, and the reset after the right text.
     RE_CHECK(strstr(s, "\x1b[1;7m") < strstr(s, "right"));
     RE_CHECK(strstr(s, "right") < strstr(s, "\x1b[0m"));
     // A subject and a summary longer than the width must not underflow the padding
@@ -285,28 +284,22 @@ static void test_header(re_arena_t *a) {
     // edge would wrap, and every box below it would be out of step.
     RE_CHECK_EQ_U(re_tui_cols_span(s, len), 40);
 }
-// The width a report is drawn to. This is the answer a resize turns on, so the
-// fallbacks are pinned: COLUMNS when a console is not available, and 80 when neither
-// is. Under a test runner stdout is a pipe, so the console path is the one no case
-// here can reach, and the environment path is the one that is actually exercised.
 static void test_width(void) {
-    _putenv("COLUMNS=");
+    test_putenv("COLUMNS=");
     RE_CHECK_EQ_U(re_tui_term_width(), RE_TUI_DEFAULT_WIDTH);
-    _putenv("COLUMNS=120");
+    test_putenv("COLUMNS=120");
     RE_CHECK_EQ_U(re_tui_term_width(), 120);
     // Too narrow to lay anything out in, and far wider than anyone needs. Both clamp
     // to something usable rather than being taken at face value.
-    _putenv("COLUMNS=10");
+    test_putenv("COLUMNS=10");
     RE_CHECK_EQ_U(re_tui_term_width(), RE_TUI_DEFAULT_WIDTH);
-    _putenv("COLUMNS=10000");
+    test_putenv("COLUMNS=10000");
     RE_CHECK_EQ_U(re_tui_term_width(), 200);
-    _putenv("COLUMNS=nonsense");
+    test_putenv("COLUMNS=nonsense");
     RE_CHECK_EQ_U(re_tui_term_width(), RE_TUI_DEFAULT_WIDTH);
-    _putenv("COLUMNS=");
+    test_putenv("COLUMNS=");
 }
 
-// A report must never be wider than the terminal it is drawn in, at any width. This
-// is the property a resize can break and a reader sees immediately as a wrapped box.
 static void test_fits_widths(re_arena_t *a) {
     static const uint16_t kWidths[] = {40, 55, 72, 100, 160, 200};
     static const char *const kSubjects[] = {
@@ -364,9 +357,6 @@ static void ui_hover(void *user, bool over) {
         p->left++;
 }
 
-// Hover fires on enter and leave, and a click is a press and a release on the same
-// zone. The release is checked after a clear, because the view rebinds between the
-// two events and a clear that forgot the press would make every button dead.
 static void test_hover_and_click(re_arena_t *a) {
     re_strbuf_t out;
     re_strbuf_init(&out, a);

@@ -31,6 +31,23 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
 
+# Clang LTO needs llvm-ar / llvm-ranlib. Distros often ship versioned names only.
+if(CMAKE_C_COMPILER_ID MATCHES "Clang" AND NOT MSVC)
+    find_program(RE_LLVM_AR NAMES llvm-ar llvm-ar-20 llvm-ar-19 llvm-ar-18 llvm-ar-17)
+    find_program(RE_LLVM_RANLIB NAMES llvm-ranlib llvm-ranlib-20 llvm-ranlib-19
+        llvm-ranlib-18 llvm-ranlib-17)
+    if(RE_LLVM_AR)
+        set(CMAKE_AR "${RE_LLVM_AR}" CACHE FILEPATH "" FORCE)
+        set(CMAKE_C_COMPILER_AR "${RE_LLVM_AR}" CACHE FILEPATH "" FORCE)
+        set(CMAKE_CXX_COMPILER_AR "${RE_LLVM_AR}" CACHE FILEPATH "" FORCE)
+    endif()
+    if(RE_LLVM_RANLIB)
+        set(CMAKE_RANLIB "${RE_LLVM_RANLIB}" CACHE FILEPATH "" FORCE)
+        set(CMAKE_C_COMPILER_RANLIB "${RE_LLVM_RANLIB}" CACHE FILEPATH "" FORCE)
+        set(CMAKE_CXX_COMPILER_RANLIB "${RE_LLVM_RANLIB}" CACHE FILEPATH "" FORCE)
+    endif()
+endif()
+
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -63,6 +80,11 @@ if(MSVC)
     # Static CRT keeps antistrefo.exe dependency free, which is the whole point.
     set_property(TARGET re_utils PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     target_compile_definitions(re_utils PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+# Shannon entropy uses log2; libm is separate on UNIX and already in the CRT on
+# Windows, so only UNIX needs an explicit link.
+if(UNIX)
+    target_link_libraries(re_utils PUBLIC m)
 endif()
 
 # ---- re_core: the feature layer, C11, parses untrusted bytes ----

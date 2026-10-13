@@ -225,8 +225,8 @@ static const char *const kBuiltIn[] = {
     "__security_check_cookie:vcrt:483b0d@751048c1c11066f7c1ffff7501c348c1c910e9@",
     // Win64 stack probe: reserves the page, reads gs:[0x10] as the stack limit and
     // touches each page in turn. Emitted for any frame over a page.
-    "__chkstk:vcrt:4883ec104c8914244c895c24084d33db4c8d5424184c2bd04d0f42d365"
-    "4c8b1c2510000000",
+    ("__chkstk:vcrt:4883ec104c8914244c895c24084d33db4c8d5424184c2bd04d0f42d365"
+     "4c8b1c2510000000"),
     // The x64 CRT string and memory primitives below are the implementations from
     // the static runtime of the toolchain that built this project. They are name
     // and address verified, and they are version specific on purpose: a signature

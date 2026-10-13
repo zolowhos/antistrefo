@@ -50,8 +50,8 @@ is `re_`. Do not unify them without a strong reason.
     .editorconfig        editor parity
     .gitignore
     LICENSE              MIT
-    CMakeLists.txt       C11/C++17, LTO, static CRT
-    CMakePresets.json    msvc-debug, msvc-release
+    CMakeLists.txt       C11/C++17, LTO; Clang/LLVM primary
+    CMakePresets.json    clang-release, clang-debug (primary)
     docs/style.md        human-readable rules
     docs/util-catalog.md util lookup table (read before writing new code)
     scripts/check.py     the gate
@@ -298,18 +298,19 @@ into task 1 because retrofitting it would have reworked the whole pipeline.
 
 | Item | Value |
 |---|---|
-| MSVC | 14.51.36231, VS 18 Community, `vcvarsall.bat x64` |
-| Windows SDK | 10.0.26100.0 / 10.0.28000.0 |
-| MinGW-w64 | gcc/g++ 15.2.0, no `libc.a`, so no static MinGW build |
-| Build | CMake 4.3.1, Ninja 1.13.2 |
-| clang-format | 20.1.8 in `VC/Tools/Llvm/x64/bin` |
-| clang-tidy | same directory, advisory only |
-| Absent | Rust, clang compiler, vcpkg, pkg-config, WSL, ELF cross compiler |
-| Sanitizers | MSVC `/fsanitize=address` works. MinGW ships **no** sanitizer runtime, `libubsan` and `libasan` are both absent. |
+| Primary compiler | Clang/LLVM (Linux `clang`/`clang++`; Windows `clang-cl` + static CRT, or `clang`) |
+| Windows SDK | needed for `clang-cl` / legacy MSVC presets; `vcvarsall.bat x64` |
+| Legacy MSVC | optional `msvc-release` / `msvc-debug` / `msvc-asan` only; not the ship path |
+| Second compiler | `gcc-debug` (alias `mingw-debug`) |
+| Build | CMake 3.25+, Ninja |
+| clang-format / clang-tidy | system LLVM or VS `VC/Tools/Llvm/x64/bin`; tidy advisory |
+| Sanitizers | `clang-asan` (`-fsanitize=address`). Legacy `msvc-asan` remains. |
 
 Notes that matter:
 
-- Ship with MSVC `/MT /O2 /GL /LTCG`. MinGW is a dev fallback only.
+- Ship with Clang/LLVM `-O2` + LTO. On Windows with the MSVC SDK, prefer
+  `clang-cl` and `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded`. MSVC `/MT /O2 /GL /LTCG`
+  is legacy only.
 - CMake 4.x errors on any dependency with `cmake_minimum_required` below 3.5. Keep
   `CMAKE_POLICY_VERSION_MINIMUM 3.5` as the escape hatch.
 - CMake also rejects a **hidden test preset that has no `configurePreset`**, and
@@ -318,6 +319,5 @@ Notes that matter:
 - CMake presets reject unknown root keys, so no banner is possible in that file.
 - No ELF cross compiler, so `scripts/gen_fixtures.py` must synthesize ELF. Treat it
   as a hard prerequisite of Task 1, not a nice-to-have.
-- There is no UBSan. The defences are MSVC `/W4 /WX`, a clean MinGW
-  `-Wall -Wextra -Werror` build, and the truncation sweep, which is the only
-  substitute for a fuzzer we can actually run here.
+- Defences are Clang `-Wall -Wextra -Werror`, a clean GCC second-compiler build,
+  `clang-asan` where available, and the truncation sweep.
