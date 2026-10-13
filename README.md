@@ -62,8 +62,11 @@ $ cmake --build --preset msvc-release
 $ ctest --preset msvc-release
 ```
 
-Presets: `msvc-debug`, `msvc-release`, `msvc-asan`, `mingw-debug`. There are no
-third-party dependencies; the only requirement is that the compiler is C11.
+Presets: `msvc-debug`, `msvc-release`, `msvc-asan`, `mingw-debug`. The native
+x86-64 decoder needs only a C11 compiler. With `RE_ENABLE_CAPSTONE` (default ON
+when disasm is enabled), CMake fetches Capstone 5.0.3 for ARM-64 behind
+`re_disasm`. Use `-DRE_ENABLE_DISASM=OFF` for a parse-only build, or
+`-DRE_ENABLE_CAPSTONE=OFF` to keep native x86 without Capstone.
 
 ## Commands
 

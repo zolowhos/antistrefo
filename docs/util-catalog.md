@@ -111,17 +111,17 @@ and `NvOptimusEnablement` are dwords a GPU driver reads, `VerLanguageNameA` in
 
 ## Disassembly, and the Capstone question
 
-Rules 8.1 planned a Capstone backend behind the `re_disasm` vtable. The backend in
-`src/features/disasm/` is a self contained x86-64 decoder instead, for three
-reasons, and the seam is unchanged either way:
+Rules 8.1 planned Capstone behind the `re_disasm` vtable. The native backend in
+`src/features/disasm/` remains the self contained x86-64 / x86 decoder. Capstone is
+fetched (tag 5.0.3) when `RE_ENABLE_CAPSTONE=ON` (default with `RE_ENABLE_DISASM`)
+and covers the gap arch: ARM-64, registered as `arm64`. Feature code never includes
+a Capstone header; only `src/features/disasm/cs/` does.
 
-- There is no vcpkg and no pkg-config here, so Capstone would mean vendoring or
-  `FetchContent`, which costs minutes on every clean build.
-- Task 3 needs instruction *lengths*, control flow classification and frame sizes,
-  not full semantics. A length decoder is enough, and it is what makes the tree
-  dependency free.
-- The vtable is the contract, so a Capstone backend drops in later behind the same
-  `re_disasm_find` lookup without touching a single caller.
+- `RE_ENABLE_DISASM=OFF` drops the whole table and does not fetch Capstone.
+- `RE_ENABLE_CAPSTONE=OFF` keeps the native x86 backends and omits `arm64`.
+- Capstone is linked only into `re_core`; the IR and emitter stay arch independent.
+- ARM-64 lowering is not modelled yet (returns 0). Decode, flags, targets, prologue
+  sniff and mnemonic render are in scope.
 
 What this means in practice, stated plainly rather than buried:
 

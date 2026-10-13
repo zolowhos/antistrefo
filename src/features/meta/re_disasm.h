@@ -105,6 +105,8 @@ typedef struct re_disasm {
 const re_disasm_t *re_disasm_find(const char *arch_name);
 size_t re_disasm_arch_count(void);
 const char *re_disasm_arch_name(size_t index);
+// PE IMAGE_FILE_MACHINE to a backend name, or NULL when none applies.
+const char *re_disasm_for_machine(uint16_t pe_machine);
 #ifdef __cplusplus
 }
 #endif
