@@ -11,18 +11,10 @@
 #include "features/pe/re_pe.h"
 #include "utils/text/re_hex.h"
 
-// Which registered backend an image's machine field asks for, or NULL when none
-// exists. The constant is the PE machine value for AMD64; every other machine
-// stays unsupported until a backend is written for it.
+// Which registered backend an image's machine field asks for. Mapping lives in
+// re_disasm_for_machine so analyze and the commands cannot drift apart.
 static const char *backend_for(uint16_t machine) {
-    switch (machine) {
-        case 0x8664:
-            return "x86-64";
-        case 0x014c:
-            return "x86";
-        default:
-            return NULL;
-    }
+    return re_disasm_for_machine(machine);
 }
 
 // The shared body of the two preps. need_decoder is the line between them: a command
