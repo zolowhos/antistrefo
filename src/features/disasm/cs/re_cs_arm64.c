@@ -5,16 +5,16 @@
 #ifndef RE_ENABLE_CAPSTONE
 typedef int re_cs_arm64_omitted_t;
 #else
-#include "features/disasm/cs/re_cs_priv.h"
+#    include "features/disasm/cs/re_cs_priv.h"
 
-#include <stddef.h>
-#include <stdint.h>
-#include <string.h>
+#    include <stddef.h>
+#    include <stdint.h>
+#    include <string.h>
 
-#include <capstone/capstone.h>
+#    include <capstone/capstone.h>
 
-#include "utils/text/re_str.h"
-#include "utils/text/re_strbuf.h"
+#    include "utils/text/re_str.h"
+#    include "utils/text/re_strbuf.h"
 
 typedef struct {
     csh handle;
@@ -263,15 +263,7 @@ static void arm64_render(void *ctx, const re_insn_t *insn, re_arena_t *a, re_str
 }
 
 const re_disasm_t re_disasm_arm64 = {
-    &g_ctx,
-    "arm64",
-    64,
-    arm64_decode,
-    arm64_lower,
-    arm64_reg_name,
-    arm64_reg_size,
-    arm64_prologue,
-    arm64_trfunc,
-    arm64_render,
+    &g_ctx,         "arm64",        64,           arm64_decode, arm64_lower, arm64_reg_name,
+    arm64_reg_size, arm64_prologue, arm64_trfunc, arm64_render,
 };
 #endif
