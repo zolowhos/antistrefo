@@ -10,6 +10,9 @@ static const char *const kFeatureNames[] = {
 #ifdef RE_ENABLE_DISASM
     "disasm",
 #endif
+#ifdef RE_ENABLE_CAPSTONE
+    "capstone",
+#endif
 #ifdef RE_ENABLE_FLIRT
     "flirt",
 #endif

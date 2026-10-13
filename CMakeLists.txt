@@ -20,8 +20,12 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-option(RE_ENABLE_DISASM "Build the Capstone backed disassembler" ON)
+option(RE_ENABLE_DISASM "Build the native x86 and Capstone gap backends" ON)
+option(RE_ENABLE_CAPSTONE "Fetch Capstone for ARM-64 (and other gap arches)" ON)
 option(RE_WERROR "Treat warnings as errors" ON)
+if(NOT RE_ENABLE_DISASM)
+    set(RE_ENABLE_CAPSTONE OFF CACHE BOOL "Capstone requires RE_ENABLE_DISASM" FORCE)
+endif()
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
@@ -72,6 +76,36 @@ target_include_directories(re_core PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(re_core PUBLIC re_utils PRIVATE re_flags)
 if(RE_ENABLE_DISASM)
     target_compile_definitions(re_core PUBLIC RE_ENABLE_DISASM=1)
+endif()
+
+# Capstone sits behind re_disasm for arches the native decoder does not cover.
+# Feature code never includes Capstone headers; only src/features/disasm/cs/ does.
+if(RE_ENABLE_CAPSTONE)
+    include(FetchContent)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(CAPSTONE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(CAPSTONE_BUILD_CSTOOL OFF CACHE BOOL "" FORCE)
+    set(CAPSTONE_BUILD_CSTEST OFF CACHE BOOL "" FORCE)
+    set(CAPSTONE_INSTALL OFF CACHE BOOL "" FORCE)
+    set(CAPSTONE_ARCHITECTURE_DEFAULT OFF CACHE BOOL "" FORCE)
+    set(CAPSTONE_ARM64_SUPPORT ON CACHE BOOL "" FORCE)
+    if(MSVC)
+        set(CAPSTONE_BUILD_STATIC_RUNTIME ON CACHE BOOL "" FORCE)
+    endif()
+    FetchContent_Declare(
+        capstone
+        GIT_REPOSITORY https://github.com/capstone-engine/capstone.git
+        GIT_TAG 5.0.3
+        GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(capstone)
+    target_compile_definitions(re_core PUBLIC RE_ENABLE_CAPSTONE=1)
+    target_link_libraries(re_core PRIVATE capstone)
+    # Capstone is third-party C; do not push our /WX onto its objects.
+    if(TARGET capstone)
+        target_compile_options(capstone PRIVATE
+            $<$<C_COMPILER_ID:MSVC>:/W1>
+            $<$<NOT:$<C_COMPILER_ID:MSVC>>:-w>)
+    endif()
 endif()
 
 # ---- antistrefo: one binary, two modes ----

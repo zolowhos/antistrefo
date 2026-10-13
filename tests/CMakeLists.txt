@@ -13,7 +13,7 @@ add_test(NAME utils COMMAND re_test_utils)
 
 # The decoder suite is a separate binary so a length regression names itself in
 # the CTest output instead of hiding inside the utility suite.
-add_executable(re_test_disasm test_disasm.c test_disasm_vec.c)
+add_executable(re_test_disasm test_disasm.c test_disasm_vec.c test_disasm_arm64.c)
 target_link_libraries(re_test_disasm PRIVATE re_core re_utils re_flags)
 if(MSVC)
     set_property(TARGET re_test_disasm
