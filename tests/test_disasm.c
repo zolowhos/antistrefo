@@ -25,6 +25,7 @@ int re_test_fail = 0;
 // The pinned encodings live in test_disasm_vec.c, which owns the table and the
 // runner; the split is only about the file cap, not about the seam.
 void re_disasm_vec_run(const re_disasm_t *dis);
+void re_disasm_arm64_run(void);
 
 static const re_disasm_t *g_x64;
 
@@ -155,10 +156,19 @@ static void test_prologue(void) {
 }
 
 static void test_registry(void) {
+#ifdef RE_ENABLE_CAPSTONE
+    RE_CHECK_EQ_U(re_disasm_arch_count(), 3);
+    RE_CHECK(re_disasm_arch_name(2) != NULL);
+    RE_CHECK(re_disasm_arch_name(3) == NULL);
+    RE_CHECK(re_disasm_find("arm64") != NULL);
+    RE_CHECK(re_disasm_find("arm64")->mode == 64);
+#else
     RE_CHECK_EQ_U(re_disasm_arch_count(), 2);
+    RE_CHECK(re_disasm_arch_name(2) == NULL);
+    RE_CHECK(re_disasm_find("arm64") == NULL);
+#endif
     RE_CHECK(re_disasm_arch_name(0) != NULL);
     RE_CHECK(re_disasm_arch_name(1) != NULL);
-    RE_CHECK(re_disasm_arch_name(2) == NULL);
     RE_CHECK(re_disasm_find("x86-64") == g_x64);
     RE_CHECK(re_disasm_find("x86") != NULL);
     RE_CHECK(re_disasm_find("x86") != g_x64);
@@ -170,6 +180,7 @@ static void test_registry(void) {
     // A transfer function is not published yet, and NULL means not modelled.
     RE_CHECK(g_x64->trfunc(g_x64->ctx, 0x90) == NULL);
     RE_CHECK(g_x64->reg_name(g_x64->ctx, 0) != NULL);
+    RE_CHECK(strcmp(re_disasm_for_machine(0xAA64), "arm64") == 0);
 }
 
 // Decode one hex string into an instruction. Shared by the two probes below so they
@@ -377,6 +388,7 @@ int main(void) {
     }
     test_registry();
     re_disasm_vec_run(g_x64);
+    re_disasm_arm64_run();
     test_targets();
     test_truncated();
     test_indirect();
