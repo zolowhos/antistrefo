@@ -243,9 +243,6 @@ void re_tui_table_init(re_tui_table_t *tt, re_tui_t *t) {
 // over, so a table always reaches the right edge of its box rather than stopping a
 // few columns short because the fixed shares did not add up to the width.
 static void table_widths(const re_tui_table_t *tt, size_t avail, size_t *out) {
-    size_t fixed = 0;
-    for (size_t i = 0; i < tt->n; i++)
-        fixed += tt->w[i];
     size_t used = 0;
     for (size_t i = 0; i < tt->n; i++) {
         if (i + 1 == tt->n) {

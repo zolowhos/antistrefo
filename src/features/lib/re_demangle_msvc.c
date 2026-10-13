@@ -67,14 +67,6 @@ static const struct {
     {"QEBA", "__cdecl"},  {"QEAI", "__cdecl"},   {"QEAX", "__cdecl"},
 };
 
-static const char *callconv(mv_t *s) {
-    for (size_t i = 0; i < sizeof(kCallConv) / sizeof(kCallConv[0]); i++) {
-        if (take(s, kCallConv[i].code))
-            return kCallConv[i].name;
-    }
-    return NULL;
-}
-
 // The primitive type encodings, which are every code that is not a class, a
 // pointer or void. Kept as a table so the mapping is auditable in one place.
 static const struct {

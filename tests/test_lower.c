@@ -42,18 +42,6 @@ static const re_ir_op_t *find_op(const re_ir_func_t *ir, re_op_kind_t k) {
     return NULL;
 }
 
-// How many ops of the kind there are.
-static size_t count_op(const re_ir_func_t *ir, re_op_kind_t k) {
-    size_t n = 0;
-    for (size_t b = 0; b < ir->n_blocks; b++) {
-        for (size_t i = 0; i < ir->blocks[b].n_ops; i++) {
-            if (ir->blocks[b].ops[i].op == k)
-                n++;
-        }
-    }
-    return n;
-}
-
 // The arithmetic block: add with its recorded result writer, the carry forms,
 // and the shifts with their own writer kinds.
 static void check_alu(const re_disasm_t *dis, re_arena_t *a) {

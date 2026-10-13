@@ -66,7 +66,7 @@ bool re_vtable_col_at(const re_pe_t *pe, uint32_t rva, uint32_t *td_rva, uint32_
     // reads back as zero and self == rva holds for free.
     if (rva == 0)
         return false;
-    if (rva > 0xFFFFFF00u || rva + COL_SIZE > 0x100000000u)
+    if (rva > 0xFFFFFF00u || (uint64_t)rva + (uint64_t)COL_SIZE > 0x100000000ull)
         return false;
     if (!rd32(pe, rva, &sig) || !rd32(pe, rva + 12u, &td) || !rd32(pe, rva + 16u, &bcd) ||
         !rd32(pe, rva + 20u, &self))

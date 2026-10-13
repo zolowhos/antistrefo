@@ -7,67 +7,182 @@
   },
   "configurePresets": [
     {
-      "name": "base",
+      "name": "clang-base",
       "hidden": true,
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
         "CMAKE_POLICY_VERSION_MINIMUM": "3.5",
-        "CMAKE_C_COMPILER": "cl",
-        "CMAKE_CXX_COMPILER": "cl"
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "RE_WERROR": "ON",
+        "RE_ENABLE_DISASM": "ON"
       }
     },
     {
-      "name": "msvc-debug",
-      "displayName": "MSVC x64 Debug, static CRT",
-      "inherits": "base",
+      "name": "clang-debug",
+      "displayName": "Clang/LLVM Debug (primary, Windows and Linux)",
+      "inherits": "clang-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "clang-release",
+      "displayName": "Clang/LLVM Release + LTO (primary ship path)",
+      "inherits": "clang-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "ON",
+        "CMAKE_C_FLAGS_RELEASE": "-O2 -DNDEBUG",
+        "CMAKE_CXX_FLAGS_RELEASE": "-O2 -DNDEBUG"
+      }
+    },
+    {
+      "name": "clang-asan",
+      "displayName": "Clang/LLVM Debug with AddressSanitizer",
+      "inherits": "clang-debug",
+      "cacheVariables": {
+        "CMAKE_C_FLAGS": "-fsanitize=address -fno-omit-frame-pointer",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address -fno-omit-frame-pointer",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address"
+      }
+    },
+    {
+      "name": "clang-cl-debug",
+      "displayName": "Windows clang-cl Debug, static CRT (primary on Win with MSVC SDK)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
       "architecture": {
         "value": "x64",
         "strategy": "external"
       },
       "cacheVariables": {
+        "CMAKE_POLICY_VERSION_MINIMUM": "3.5",
         "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreadedDebug"
+        "CMAKE_C_COMPILER": "clang-cl",
+        "CMAKE_CXX_COMPILER": "clang-cl",
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreadedDebug",
+        "RE_WERROR": "ON",
+        "RE_ENABLE_DISASM": "ON"
+      }
+    },
+    {
+      "name": "clang-cl-release",
+      "displayName": "Windows clang-cl Release, static CRT + LTO (primary Win ship)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "CMAKE_POLICY_VERSION_MINIMUM": "3.5",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "clang-cl",
+        "CMAKE_CXX_COMPILER": "clang-cl",
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded",
+        "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "ON",
+        "RE_WERROR": "ON",
+        "RE_ENABLE_DISASM": "ON"
+      }
+    },
+    {
+      "name": "gcc-debug",
+      "displayName": "GCC/MinGW Debug, second compiler check",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_POLICY_VERSION_MINIMUM": "3.5",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "RE_WERROR": "ON",
+        "RE_ENABLE_DISASM": "ON"
+      }
+    },
+    {
+      "name": "mingw-debug",
+      "displayName": "Legacy alias for gcc-debug",
+      "inherits": "gcc-debug"
+    },
+    {
+      "name": "msvc-debug",
+      "displayName": "LEGACY MSVC x64 Debug, static CRT (not the ship path)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "CMAKE_POLICY_VERSION_MINIMUM": "3.5",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl",
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreadedDebug",
+        "RE_ENABLE_DISASM": "ON"
       }
     },
     {
       "name": "msvc-release",
-      "displayName": "MSVC x64 Release, static CRT, LTO",
-      "inherits": "base",
+      "displayName": "LEGACY MSVC x64 Release /MT /O2 /GL /LTCG (not the ship path)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
       "architecture": {
         "value": "x64",
         "strategy": "external"
       },
       "cacheVariables": {
+        "CMAKE_POLICY_VERSION_MINIMUM": "3.5",
         "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl",
         "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded",
         "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "ON",
-        "RE_WERROR": "ON"
+        "RE_WERROR": "ON",
+        "RE_ENABLE_DISASM": "ON"
       }
     },
     {
       "name": "msvc-asan",
-      "displayName": "MSVC x64 Debug with the address sanitizer",
+      "displayName": "LEGACY MSVC x64 Debug ASan (not the ship path)",
       "inherits": "msvc-debug",
       "cacheVariables": {
         "CMAKE_C_FLAGS": "/fsanitize=address",
         "CMAKE_CXX_FLAGS": "/fsanitize=address"
       }
-    },
-    {
-      "name": "mingw-debug",
-      "displayName": "MinGW x64 Debug, second compiler check",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/${presetName}",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_C_COMPILER": "gcc",
-        "CMAKE_CXX_COMPILER": "g++",
-        "RE_WERROR": "ON"
-      }
     }
   ],
   "buildPresets": [
+    {
+      "name": "clang-debug",
+      "configurePreset": "clang-debug"
+    },
+    {
+      "name": "clang-release",
+      "configurePreset": "clang-release"
+    },
+    {
+      "name": "clang-asan",
+      "configurePreset": "clang-asan"
+    },
+    {
+      "name": "clang-cl-debug",
+      "configurePreset": "clang-cl-debug"
+    },
+    {
+      "name": "clang-cl-release",
+      "configurePreset": "clang-cl-release"
+    },
+    {
+      "name": "gcc-debug",
+      "configurePreset": "gcc-debug"
+    },
+    {
+      "name": "mingw-debug",
+      "configurePreset": "mingw-debug"
+    },
     {
       "name": "msvc-debug",
       "configurePreset": "msvc-debug"
@@ -79,13 +194,69 @@
     {
       "name": "msvc-asan",
       "configurePreset": "msvc-asan"
-    },
-    {
-      "name": "mingw-debug",
-      "configurePreset": "mingw-debug"
     }
   ],
   "testPresets": [
+    {
+      "name": "clang-release",
+      "configurePreset": "clang-release",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "clang-debug",
+      "configurePreset": "clang-debug",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "clang-asan",
+      "configurePreset": "clang-asan",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "clang-cl-release",
+      "configurePreset": "clang-cl-release",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "gcc-debug",
+      "configurePreset": "gcc-debug",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "mingw-debug",
+      "configurePreset": "mingw-debug",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
     {
       "name": "msvc-release",
       "configurePreset": "msvc-release",
@@ -99,16 +270,6 @@
     {
       "name": "msvc-asan",
       "configurePreset": "msvc-asan",
-      "output": {
-        "outputOnFailure": true
-      },
-      "execution": {
-        "noTestsAction": "error"
-      }
-    },
-    {
-      "name": "mingw-debug",
-      "configurePreset": "mingw-debug",
       "output": {
         "outputOnFailure": true
       },

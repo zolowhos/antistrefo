@@ -62,6 +62,7 @@ static void check_entry(const char *path) {
     fn = RE_VEC_PTR(&scan.funcs, re_func_t, (size_t)idx);
     re_xref_build(&code, &scan, &pe, &a, &xs);
     re_stack_analyze(&code, fn, &a, &st);
+    memset(&d, 0, sizeof(d));
     d.code = &code;
     d.jtables = NULL;
     d.xrefs = &xs;

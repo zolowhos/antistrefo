@@ -39,7 +39,6 @@ constexpr int kErrParse = -32700;
 constexpr int kErrInvalid = -32600;
 constexpr int kErrNoMethod = -32601;
 constexpr int kErrParams = -32602;
-constexpr int kErrInternal = -32603;
 
 // A session is a name a client chose for a file, so a client can ask the same question
 // about the same file many times without naming the file every time. The parsed

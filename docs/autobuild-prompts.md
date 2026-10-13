@@ -16,14 +16,14 @@ signature DB, 3 packages 1+2, 4 builds on 3's shared context.
 **Repo:** `C:\Users\xyz\Pictures\RE` — branch `main`, C11 + C++17, CMake.
 Two commits are unpushed at time of writing; push only when asked.
 
-**Build:**
+**Build (Clang/LLVM primary):**
 ```
-$q = '"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvarsall.bat"'
-cmd /c "$q x64 >nul 2>&1 && cmake --build --preset msvc-release"
-cmd /c "$q x64 >nul 2>&1 && ctest --preset msvc-release --output-on-failure"
+cmake --preset clang-release && cmake --build --preset clang-release
+ctest --preset clang-release --output-on-failure
 ```
-Other presets: `msvc-debug`, `msvc-asan` (build only — the ASan binary can't run
-without the redist DLL), `mingw-debug`.
+Windows with MSVC SDK: `clang-cl-release` (static CRT; `vcvarsall.bat x64` first).
+Other presets: `clang-debug`, `clang-asan`, `gcc-debug`. Legacy only:
+`msvc-release`, `msvc-debug`, `msvc-asan`.
 
 **The gate:** `python scripts\check.py .` must print `all rules pass` before every
 commit. `--fix` only clears CRLF, trailing whitespace and EOF newline.
@@ -161,7 +161,7 @@ CONSTRAINTS
 - Rule 0: read docs/util-catalog.md before writing anything.
 - No malloc/free, no libc string calls, no stdout writes outside src/utils.
 - The gate is `python scripts\check.py .` -> must print "all rules pass".
-  Then `ctest --preset msvc-release` -> 6/6.
+  Then `ctest --preset clang-release` -> 6/6.
 - If the format test fails after your edits, run scripts\format.ps1 and rebuild.
 
 TEST FILES (quote paths - two contain [ and ] which break globs)
@@ -240,7 +240,7 @@ CONSTRAINTS
 - Rule 0: read docs/util-catalog.md before writing anything.
 - No malloc/free, no libc string calls, no stdout writes outside src/utils.
 - Gate: `python scripts\check.py .` -> "all rules pass". Then
-  `ctest --preset msvc-release` -> 6/6.
+  `ctest --preset clang-release` -> 6/6.
 - If the format test fails, run scripts\format.ps1 and rebuild.
 - Keep every folder at 15 files or fewer.
 
@@ -319,7 +319,7 @@ CONSTRAINTS
 - Rule 0: read docs/util-catalog.md before writing anything.
 - No malloc/free, no libc string calls, no stdout writes outside src/utils.
 - Gate: `python scripts\check.py .` -> "all rules pass". Then
-  `ctest --preset msvc-release` -> 6/6.
+  `ctest --preset clang-release` -> 6/6.
 - Keep every folder at 15 files or fewer.
 - Output policy unchanged: text when stdout is a TTY, JSON when piped,
   --format overrides, --no-color honoured. MCP must keep working.
@@ -406,7 +406,7 @@ CONSTRAINTS
 - Rule 0: read docs/util-catalog.md before writing anything.
 - No malloc/free, no libc string calls, no stdout writes outside src/utils.
 - Gate: `python scripts\check.py .` -> "all rules pass". Then
-  `ctest --preset msvc-release` -> all pass.
+  `ctest --preset clang-release` -> all pass.
 - Keep every folder at 15 files or fewer.
 
 TEST FILES (quote paths; two contain [ and ] which break globs)
