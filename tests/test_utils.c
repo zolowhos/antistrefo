@@ -435,6 +435,7 @@ int main(void) {
     test_err();
     test_json();
     test_str_split_join();
+    check_demangle();
     re_test_features();
     return re_test_report("all");
 }

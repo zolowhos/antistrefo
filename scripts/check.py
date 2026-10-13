@@ -18,7 +18,7 @@ MAX_NESTING = 4
 BANNER_LINES = 4
 
 # Files with a closed external schema or legal text cannot carry a banner.
-BANNER_EXEMPT = {"LICENSE", "CMakePresets.json"}
+BANNER_EXEMPT = {"LICENSE", "CMakePresets.json", "README.md"}
 # Legal texts may legitimately contain trailing spaces.
 TRAILING_WS_EXEMPT = {"LICENSE"}
 # Non ASCII is fine in prose, never in code.

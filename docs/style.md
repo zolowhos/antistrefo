@@ -17,7 +17,7 @@ Never hand format, and never argue with the tool in review.
 | Alignment padding | off | it burns line budget and creates diff noise |
 | Include sorting | on, case insensitive | makes a missing include obvious |
 
-Run `cmake --build build/msvc-release --target re_format` to format everything.
+Run `cmake --build build/clang-release --target re_format` to format everything.
 The `format` CTest test fails the build on any drift.
 
 ## The banner
@@ -96,17 +96,17 @@ why it only ever writes stderr, and why the mcp entry point mutes it outright.
 CTest targets print only on failure. The utility suite checks published test
 vectors, not self consistency, because a self consistent SHA-256 is still wrong.
 
-Sanitizer coverage is uneven, and honestly so. This MinGW distribution ships no
-sanitizer runtime at all, `libubsan` and `libasan` are both missing, so there is no
-UBSan here.
+Sanitizer coverage follows the Clang primary path. GCC remains a second-compiler
+check. Legacy MSVC ASan is optional on Windows-only machines.
 
 | Preset | What it actually does | Compiler |
 |---|---|---|
-| `msvc-asan` | address sanitizer, the only real dynamic check available | MSVC `/fsanitize=address` |
-| `mingw-debug` | a second compiler, catching MSVC specific assumptions | MinGW `-Wall -Wextra -Werror` |
+| `clang-asan` | address sanitizer on the primary toolchain | Clang `-fsanitize=address` |
+| `gcc-debug` | a second compiler, catching Clang-specific assumptions | GCC `-Wall -Wextra -Werror` |
+| `msvc-asan` | legacy MSVC ASan only | MSVC `/fsanitize=address` |
 
-So the memory safety story rests on three things instead of a fuzzer: MSVC ASan,
-a warning-clean build under two compilers with `/WX` and `-Werror`, and the
+So the memory safety story rests on three things instead of a fuzzer: Clang ASan,
+a warning-clean build under Clang and GCC with `-Werror`, and the
 truncation sweep below. Run all three before calling a task done.
 
 For parsers, the truncation sweep is the highest value test in the project: cut

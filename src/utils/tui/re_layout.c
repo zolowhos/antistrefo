@@ -105,10 +105,10 @@ static void draw_menu(re_screen_t *s, re_layout_t *L, const frame_t *f) {
     if (L->file && *L->file && cx + 2u < mark_x)
         cx =
             re_screen_put_run(s, 0, cx, mark_x, L->file, (uint8_t)RE_ST_LABEL, RE_SCREEN_ZONE_NONE);
-    cx = dash_n(s, 0, cx, (uint16_t)(mark_x > cx ? mark_x - cx : 0u), mark_x, f->h);
+    cx = dash_n(s, 0, cx, (uint16_t)(mark_x > cx ? (unsigned)(mark_x - cx) : 0u), mark_x, f->h);
     if (mw && mark_x < last)
         cx = bracket_item(s, 0, mark_x, last, L->mark, (uint8_t)RE_ST_NONE, RE_SCREEN_ZONE_NONE);
-    cx = dash_n(s, 0, cx, (uint16_t)(last > cx ? last - cx : 0u), last, f->h);
+    cx = dash_n(s, 0, cx, (uint16_t)(last > cx ? (unsigned)(last - cx) : 0u), last, f->h);
     re_screen_put(s, 0, last, f->tr, (uint8_t)RE_ST_NONE, RE_SCREEN_ZONE_NONE);
 }
 
@@ -122,7 +122,7 @@ static void draw_pages(re_screen_t *s, re_layout_t *L, uint16_t split, const fra
     uint16_t cx = dash_n(s, 1, 1, 3, split, f->h);
     if (L->list_title && *L->list_title && cx + 2u < split)
         cx = bracket_item(s, 1, cx, split, L->list_title, (uint8_t)RE_ST_NONE, RE_SCREEN_ZONE_NONE);
-    cx = dash_n(s, 1, cx, (uint16_t)(split > cx ? split - cx : 0u), split, f->h);
+    cx = dash_n(s, 1, cx, (uint16_t)(split > cx ? (unsigned)(split - cx) : 0u), split, f->h);
     uint8_t first = RE_SCREEN_ZONE_NONE;
     uint8_t drawn = 0;
     for (size_t i = 0; i < L->n_tabs && cx + 4u < last; i++) {
@@ -141,7 +141,7 @@ static void draw_pages(re_screen_t *s, re_layout_t *L, uint16_t split, const fra
     }
     L->tab_zone = first;
     L->tabs_drawn = drawn;
-    cx = dash_n(s, 1, cx, (uint16_t)(last > cx ? last - cx : 0u), last, f->h);
+    cx = dash_n(s, 1, cx, (uint16_t)(last > cx ? (unsigned)(last - cx) : 0u), last, f->h);
     re_screen_put(s, 1, last, f->tr, (uint8_t)RE_ST_NONE, RE_SCREEN_ZONE_NONE);
 }
 

@@ -307,6 +307,7 @@ static void check_emit(void) {
     f.rva = TEXT_RVA;
     f.size = 20;
     f.flags = RE_FUNC_ENTRY | RE_FUNC_RET;
+    memset(&d, 0, sizeof(d));
     d.code = &code;
     d.jtables = NULL;
     d.xrefs = NULL;
@@ -349,6 +350,7 @@ static void check_pred_lowered(void) {
     f.rva = TEXT_RVA;
     f.size = sizeof(kPred);
     f.flags = RE_FUNC_ENTRY | RE_FUNC_RET;
+    memset(&d, 0, sizeof(d));
     d.code = &code;
     d.jtables = NULL;
     d.xrefs = NULL;
