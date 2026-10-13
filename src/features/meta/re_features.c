@@ -5,8 +5,7 @@
 #include "features/meta/re_features.h"
 
 static const char *const kFeatureNames[] = {
-    "utils",
-    "core",
+    "utils",    "core",
 #ifdef RE_ENABLE_DISASM
     "disasm",
 #endif
