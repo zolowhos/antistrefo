@@ -4,10 +4,11 @@
 // Depends: re_alt, re_prep, re_func, re_json. Unified argv and MCP surface.
 #include "cli/cmds/re_cmds.h"
 
-#include "cli/cmds/re_prep.h"
 #include "features/analysis/re_alt.h"
+#include "features/analysis/re_analyze.h"
 #include "features/code/re_func.h"
 #include "utils/json/re_json.h"
+#include "cli/cmds/re_prep.h"
 
 static void touch_session(re_ctx_t *ctx, const char *path, uint32_t rva, re_str_t name) {
     re_fscan_t *scan;
