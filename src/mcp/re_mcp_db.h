@@ -1,6 +1,6 @@
 // re_mcp_db.h - open-database registry matching the ida-mcp instance model.
 // Module: mcp (C11).
-// Owns: instance ids, current target, path lookup for execute_python.
+// Owns: instance ids, current target, path lookup for execute_query.
 // Depends: re_mcp_live. Process-local; no I/O, no heap beyond static slots.
 #pragma once
 
@@ -22,10 +22,6 @@ typedef struct {
     bool used;
     bool current;
 } re_mcp_db_t;
-
-// Path of the antistrefo executable, for the execute_python shim.
-void re_mcp_db_set_exe(const char *path);
-const char *re_mcp_db_exe(void);
 
 // Open or attach path. Writes the instance into *out. set_current selects it.
 // backend is "gui" or "idalib". Returns false when the table is full.

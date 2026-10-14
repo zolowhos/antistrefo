@@ -17,8 +17,6 @@
 #include "cli/cmds/re_cmds.h"
 #include "cli/screen/re_gui.h"
 #include "mcp/re_mcp.h"
-#include "mcp/re_mcp_db.h"
-#include "mcp/re_mcp_exec.h"
 #include "mcp/re_mcp_side.h"
 
 namespace {
@@ -148,20 +146,9 @@ int run_one(const re_cmd_t *cmd, int argc, char **argv) {
     return code;
 }
 
-static void init_mcp_paths(int argc, char **argv) {
-    if (argc > 0 && argv[0] && argv[0][0])
-        re_mcp_db_set_exe(argv[0]);
-#ifdef RE_SCRIPTS_DIR
-    re_mcp_exec_set_scripts(RE_SCRIPTS_DIR);
-#else
-    (void)argc;
-#endif
-}
-
 int main(int argc, char **argv) {
     re_log_init_from_env();
     re_crc_init();
-    init_mcp_paths(argc, argv);
     // MCP needs binary stdout; interactive modes need a UTF-8 console code page.
     bool mcp_mode = argc >= 2 && re_str_eq_cstr(re_str(argv[1]), "mcp");
     re_tui_set_stream_mode(mcp_mode);

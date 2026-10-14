@@ -130,7 +130,7 @@ add_test(NAME mcp_tools_list
         -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/mcp_tools_list.jsonl
         -P ${CMAKE_CURRENT_SOURCE_DIR}/run_mcp_tools_list.cmake)
 
-# ida-mcp tool result shapes (open/list/execute_python/reference/save/close).
+# ida-mcp tool result shapes (open/list/execute_query/reference/save/close).
 add_test(NAME mcp_ida_shapes
     COMMAND ${CMAKE_COMMAND}
         -DANTISTREFO=$<TARGET_FILE:antistrefo>

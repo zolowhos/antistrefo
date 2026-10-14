@@ -1,7 +1,7 @@
-// re_ida_cmds.c - ida-mcp shaped database and execute_python commands.
+// re_ida_cmds.c - ida-mcp shaped database tools and native execute_query.
 // Module: cli (C11).
-// Owns: open/list/close/save/execute_python/reference JSON bodies.
-// Depends: re_mcp_db, re_mcp_exec, re_jw. MCP omits antistrefo/1 via ida_shape.
+// Owns: open/list/close/save/execute_query/reference JSON bodies.
+// Depends: re_mcp_db, re_mcp_query, re_jw. No Python. MCP uses ida_shape.
 #include "cli/cmds/re_ida_cmds.h"
 
 #include "utils/json/re_jr.h"
@@ -10,7 +10,7 @@
 #include "utils/text/re_str.h"
 #include "utils/text/re_strbuf.h"
 #include "mcp/re_mcp_db.h"
-#include "mcp/re_mcp_exec.h"
+#include "mcp/re_mcp_query.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -48,8 +48,7 @@ static void emit_open(re_ctx_t *ctx, const re_mcp_db_t *db) {
     re_jw_kcstr(&w, "recovery", "none");
     re_jw_kcstr(&w, "log_path", "");
     re_jw_knull(&w, "mcp_id");
-    re_jw_kcstr(&w, "hint",
-                "Call reference(query) before execute_python. db and ida_domain are available.");
+    re_jw_kcstr(&w, "hint", "Call execute_query with op=... after open_database.");
     end_obj(ctx, &w);
 }
 
@@ -67,7 +66,6 @@ int re_cmd_open_database(re_ctx_t *ctx, const char *path, int argc, char **argv)
         RE_ERR_SET(ctx->err, RE_E_USAGE, "open_database needs path");
         return 2;
     }
-    // Skip a positional that repeats the path; the next token is set_current.
     set_tok = re_cmd_positional(argc, argv, first);
     if (set_tok && re_str_eq_cstr(re_str(set_tok), file)) {
         int i = first;
@@ -155,41 +153,78 @@ int re_cmd_save_database(re_ctx_t *ctx, const char *path, int argc, char **argv)
     return 5;
 }
 
-int re_cmd_execute_python(re_ctx_t *ctx, const char *path, int argc, char **argv) {
-    const char *id = NULL;
-    const char *code = NULL;
-    const char *db_path;
-    re_strbuf_t out;
-    int first = 0;
-    bool ok;
-    (void)path;
-    if (!re_cmd_parse(ctx, argc, argv, &first, ctx->err))
-        return 2;
-    // argv: [code] or [instance_id, code] when two positionals.
-    if (first < argc && first + 1 < argc) {
-        id = argv[first];
-        code = argv[first + 1];
-    } else if (first < argc) {
-        code = argv[first];
-    }
-    if (!code) {
-        RE_ERR_SET(ctx->err, RE_E_USAGE, "execute_python needs code");
-        return 2;
-    }
-    db_path = re_mcp_db_path(id);
-    re_strbuf_init(&out, ctx->arena);
-    ok = re_mcp_exec_python(db_path, code, &out);
+static void emit_query_ok(re_ctx_t *ctx, const char *op, const re_strbuf_t *body) {
+    re_strbuf_t b;
+    re_strbuf_init(&b, ctx->arena);
+    re_strbuf_puts(&b, "{\"op\":");
+    re_jr_escape(&b, re_str(op));
+    re_strbuf_puts(&b, ",\"result\":");
+    re_strbuf_append(&b, body->p ? body->p : "{}", body->len);
+    re_strbuf_putc(&b, '}');
     if (ctx->ida_shape) {
-        write_raw(ctx, out.p, out.len);
-        return ok ? 0 : 5;
+        write_raw(ctx, b.p, b.len);
+        return;
     }
     {
         re_jw_t w;
-        begin_obj(ctx, &w, "execute_python");
-        re_jw_kcstr(&w, "raw", out.p ? out.p : "{}");
+        begin_obj(ctx, &w, "execute_query");
+        re_jw_kcstr(&w, "raw", b.p ? b.p : "{}");
         end_obj(ctx, &w);
     }
-    return ok ? 0 : 5;
+}
+
+static void scan_flags(int argc, char **argv, bool *has_len, bool *has_off, bool *has_rva) {
+    *has_len = *has_off = *has_rva = false;
+    for (int i = 0; i < argc; i++) {
+        if (re_str_eq_cstr(re_str(argv[i]), "--len"))
+            *has_len = true;
+        else if (re_str_eq_cstr(re_str(argv[i]), "--off"))
+            *has_off = true;
+        else if (re_str_eq_cstr(re_str(argv[i]), "--rva"))
+            *has_rva = true;
+    }
+}
+
+int re_cmd_execute_query(re_ctx_t *ctx, const char *path, int argc, char **argv) {
+    const char *op;
+    const char *arg = NULL;
+    const char *db_path = path;
+    const char *regex = NULL;
+    re_strbuf_t out;
+    re_err_t err;
+    int first = 0;
+    bool has_len, has_off, has_rva;
+    bool ok;
+    if (!re_cmd_parse(ctx, argc, argv, &first, ctx->err))
+        return 2;
+    op = re_cmd_positional(argc, argv, first);
+    if (!op) {
+        RE_ERR_SET(ctx->err, RE_E_USAGE, "execute_query needs op");
+        return 2;
+    }
+    {
+        int i = first;
+        while (i < argc && !re_str_eq_cstr(re_str(argv[i]), op))
+            i++;
+        arg = re_cmd_positional(argc, argv, i + 1);
+    }
+    if (!db_path || !db_path[0])
+        db_path = re_mcp_db_path(NULL);
+    if (ctx->has_regex)
+        regex = ctx->regex.p;
+    scan_flags(argc, argv, &has_len, &has_off, &has_rva);
+    re_strbuf_init(&out, ctx->arena);
+    err.code = RE_OK;
+    ok = re_mcp_query_run(ctx->arena, db_path, op, arg, ctx->len, ctx->off, ctx->off, has_len,
+                          has_off && !has_rva, has_rva, regex, ctx->limit, ctx->offset, &out, &err);
+    if (!ok) {
+        write_raw(ctx, out.p, out.len);
+        if (ctx->err && err.code != RE_OK)
+            *ctx->err = err;
+        return err.code == RE_E_USAGE ? 2 : 5;
+    }
+    emit_query_ok(ctx, op, &out);
+    return 0;
 }
 
 int re_cmd_reference(re_ctx_t *ctx, const char *path, int argc, char **argv) {
@@ -201,7 +236,7 @@ int re_cmd_reference(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     if (!re_cmd_parse(ctx, argc, argv, &first, ctx->err))
         return 2;
     query = re_cmd_positional(argc, argv, first);
-    text = re_mcp_reference_text(query);
+    text = re_mcp_query_reference(query);
     if (ctx->ida_shape) {
         re_strbuf_init(&b, ctx->arena);
         re_jr_escape(&b, re_str(text));

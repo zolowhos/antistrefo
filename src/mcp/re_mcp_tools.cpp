@@ -27,16 +27,16 @@ struct ToolSpec {
 constexpr ArgSpec kEnd = {NULL, NULL, NULL, false};
 const ToolSpec kToolArgs[] = {
     {"open_database",
-     {{"set_current", NULL, "become the default target for execute_python", false},
+     {{"set_current", NULL, "become the default target for execute_query", false},
       kEnd,
       kEnd,
       kEnd}},
-    {"execute_python",
-     {{"code", NULL, "python against the open database", false},
-      {"instance_id", NULL, "optional database instance id", false},
-      {"timeout", NULL, "ignored; accepted for ida-mcp parity", true},
+    {"execute_query",
+     {{"op", NULL, "analysis op: funcs disasm decompile xrefs strings ...", false},
+      {"addr", NULL, "address or search pattern for the op", false},
+      {"len", "--len", "byte or instruction length", true},
       kEnd}},
-    {"reference", {{"query", NULL, "API or task to look up", false}, kEnd, kEnd, kEnd}},
+    {"reference", {{"query", NULL, "op or task to look up", false}, kEnd, kEnd, kEnd}},
     {"close_database",
      {{"instance_id", NULL, "optional database instance id", false}, kEnd, kEnd, kEnd}},
     {"save_database",
@@ -78,7 +78,7 @@ bool is_ida_tool(const char *name) {
            re_str_eq_cstr(re_str(name), "list_databases") ||
            re_str_eq_cstr(re_str(name), "close_database") ||
            re_str_eq_cstr(re_str(name), "save_database") ||
-           re_str_eq_cstr(re_str(name), "execute_python") ||
+           re_str_eq_cstr(re_str(name), "execute_query") ||
            re_str_eq_cstr(re_str(name), "reference");
 }
 
@@ -91,20 +91,29 @@ bool schema_ida(const char *name, re_strbuf_t *b) {
                           "available.\"},"
                           "\"set_current\":{\"type\":\"boolean\",\"description\":"
                           "\"Whether this database should become the default target for "
-                          "execute_python().\",\"default\":true},"
+                          "execute_query().\",\"default\":true},"
                           "\"load_options\":{\"description\":"
                           "\"Accepted for parity; ignored by antistrefo.\"}"
                           "},\"required\":[\"path\"]}");
         return true;
     }
-    if (re_str_eq_cstr(re_str(name), "execute_python")) {
-        re_strbuf_puts(b, "{\"type\":\"object\",\"properties\":{"
-                          "\"code\":{\"type\":\"string\",\"description\":"
-                          "\"Python code that runs against an already-open database.\"},"
-                          "\"instance_id\":{\"description\":\"Optional database instance id.\"},"
-                          "\"timeout\":{\"type\":\"number\",\"description\":"
-                          "\"Accepted for parity; not enforced.\"}"
-                          "},\"required\":[\"code\"]}");
+    if (re_str_eq_cstr(re_str(name), "execute_query")) {
+        re_strbuf_puts(b,
+                       "{\"type\":\"object\",\"properties\":{"
+                       "\"op\":{\"type\":\"string\",\"description\":"
+                       "\"Native analysis op (funcs, disasm, decompile, xrefs, strings, ...).\"},"
+                       "\"addr\":{\"type\":\"string\",\"description\":"
+                       "\"Address or pattern argument for the op.\"},"
+                       "\"pattern\":{\"type\":\"string\",\"description\":"
+                       "\"Alias of addr for search.\"},"
+                       "\"len\":{\"type\":\"integer\"},"
+                       "\"off\":{\"type\":\"integer\"},"
+                       "\"rva\":{\"type\":\"integer\"},"
+                       "\"regex\":{\"type\":\"string\"},"
+                       "\"instance_id\":{\"description\":\"Optional database instance id.\"},"
+                       "\"limit\":{\"type\":\"integer\"},"
+                       "\"offset\":{\"type\":\"integer\"}"
+                       "},\"required\":[\"op\"]}");
         return true;
     }
     if (re_str_eq_cstr(re_str(name), "reference")) {
@@ -188,13 +197,15 @@ int build_argv_ida(const re_cmd_t *cmd, const re_jr_t *args, re_arena_t *a, char
             argv[argc++] = const_cast<char *>("0");
         return argc;
     }
-    if (re_str_eq_cstr(re_str(cmd->name), "execute_python")) {
-        re_str_t id = re_jr_str(re_jr_get(args, "instance_id"), "");
-        re_str_t code = re_jr_str(re_jr_get(args, "code"), "");
-        if (id.n)
-            argv[argc++] = re_arena_strndup(a, id.p, id.n);
-        if (code.n)
-            argv[argc++] = re_arena_strndup(a, code.p, code.n);
+    if (re_str_eq_cstr(re_str(cmd->name), "execute_query")) {
+        re_str_t op = re_jr_str(re_jr_get(args, "op"), "");
+        re_str_t addr = re_jr_str(re_jr_get(args, "addr"), "");
+        re_str_t pattern = re_jr_str(re_jr_get(args, "pattern"), "");
+        re_str_t arg = addr.n ? addr : pattern;
+        if (op.n)
+            argv[argc++] = re_arena_strndup(a, op.p, op.n);
+        if (arg.n)
+            argv[argc++] = re_arena_strndup(a, arg.p, arg.n);
         return argc;
     }
     if (re_str_eq_cstr(re_str(cmd->name), "reference")) {
@@ -213,12 +224,47 @@ int build_argv_ida(const re_cmd_t *cmd, const re_jr_t *args, re_arena_t *a, char
     return -1;
 }
 
+static int append_query_flags(const re_jr_t *args, re_arena_t *a, char **argv, int argc,
+                              char (*tok)[24], int *ntok) {
+    if (re_jr_has(args, "len")) {
+        argv[argc++] = const_cast<char *>("--len");
+        argv[argc++] = num_tok(tok, ntok, re_jr_i64(re_jr_get(args, "len"), 0));
+    }
+    if (re_jr_has(args, "off")) {
+        argv[argc++] = const_cast<char *>("--off");
+        argv[argc++] = num_tok(tok, ntok, re_jr_i64(re_jr_get(args, "off"), 0));
+    }
+    if (re_jr_has(args, "rva")) {
+        argv[argc++] = const_cast<char *>("--rva");
+        argv[argc++] = num_tok(tok, ntok, re_jr_i64(re_jr_get(args, "rva"), 0));
+    }
+    if (re_jr_has(args, "regex")) {
+        re_str_t r = re_jr_str(re_jr_get(args, "regex"), "");
+        argv[argc++] = const_cast<char *>("--regex");
+        argv[argc++] = r.n ? re_arena_strndup(a, r.p, r.n) : const_cast<char *>("");
+    }
+    int64_t limit = re_jr_i64(re_jr_get(args, "limit"), -1);
+    if (limit > 0) {
+        argv[argc++] = const_cast<char *>("--limit");
+        argv[argc++] = num_tok(tok, ntok, limit);
+    }
+    int64_t offset = re_jr_i64(re_jr_get(args, "offset"), -1);
+    if (offset >= 0) {
+        argv[argc++] = const_cast<char *>("--offset");
+        argv[argc++] = num_tok(tok, ntok, offset);
+    }
+    return argc;
+}
+
 int build_argv(const re_cmd_t *cmd, const char *path, const re_jr_t *args, re_arena_t *a,
                char **argv, char (*tok)[24]) {
     int argc = build_argv_ida(cmd, args, a, argv);
     int ntok = 0;
-    if (argc >= 0)
+    if (argc >= 0) {
+        if (re_str_eq_cstr(re_str(cmd->name), "execute_query") && args)
+            argc = append_query_flags(args, a, argv, argc, tok, &ntok);
         return argc;
+    }
     argc = 0;
     if (cmd->needs_path)
         argv[argc++] = const_cast<char *>(path);

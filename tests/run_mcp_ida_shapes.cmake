@@ -1,6 +1,6 @@
 # run_mcp_ida_shapes.cmake - pin ida-mcp tool result shapes via MCP tools/call.
 # Module: test (CMake).
-# Owns: open/list/execute_python/reference/save/close structuredContent checks.
+# Owns: open/list/execute_query/reference/save/close structuredContent checks.
 # Depends: antistrefo, PE fixture emitter, mcp_ida_shapes.jsonl.
 if(NOT DEFINED ANTISTREFO OR NOT DEFINED INPUT OR NOT DEFINED FIXTURE OR NOT DEFINED EMITTER)
     message(FATAL_ERROR "ANTISTREFO, INPUT, FIXTURE, and EMITTER are required")
@@ -77,21 +77,21 @@ if(NOT inst0_id STREQUAL "${instance_id}")
     message(FATAL_ERROR "list_databases instance_id mismatch")
 endif()
 
-list(GET frames 3 py_frame)
-string(JSON py_result ERROR_VARIABLE json_error GET
-    "${py_frame}" result structuredContent result)
-if(NOT json_error STREQUAL "NOTFOUND")
-    message(FATAL_ERROR "execute_python missing result: ${json_error}")
+list(GET frames 3 query_frame)
+string(JSON q_op ERROR_VARIABLE json_error GET
+    "${query_frame}" result structuredContent op)
+if(NOT q_op STREQUAL "info")
+    message(FATAL_ERROR "execute_query op should be info, got ${q_op}")
 endif()
-if(NOT py_result EQUAL 2)
-    message(FATAL_ERROR "execute_python 1+1 should be 2, got ${py_result}")
+string(JSON q_tool ERROR_VARIABLE json_error GET
+    "${query_frame}" result structuredContent result tool)
+if(NOT q_tool STREQUAL "info")
+    message(FATAL_ERROR "execute_query result.tool should be info, got ${q_tool}")
 endif()
-string(JSON py_stdout ERROR_VARIABLE json_error GET
-    "${py_frame}" result structuredContent stdout)
-string(JSON py_stderr ERROR_VARIABLE json_error GET
-    "${py_frame}" result structuredContent stderr)
-if(NOT json_error STREQUAL "NOTFOUND")
-    message(FATAL_ERROR "execute_python missing stdout/stderr")
+string(JSON q_schema ERROR_VARIABLE json_error GET
+    "${query_frame}" result structuredContent result schema)
+if(NOT q_schema STREQUAL "antistrefo/1")
+    message(FATAL_ERROR "execute_query nested result should keep antistrefo/1")
 endif()
 
 list(GET frames 4 ref_frame)

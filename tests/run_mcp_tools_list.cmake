@@ -31,7 +31,7 @@ endif()
 
 set(required_tools
     open_database
-    execute_python
+    execute_query
     reference
     list_databases
     save_database

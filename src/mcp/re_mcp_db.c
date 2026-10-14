@@ -1,7 +1,7 @@
 // re_mcp_db.c - process-local database instances for the ida-mcp tool surface.
 // Module: mcp (C11).
-// Owns: the instance table, current pointer, and exe path for the shim.
-// Depends: re_mcp_db.h, re_mcp_live, re_str, re_path. No heap.
+// Owns: the instance table and current pointer.
+// Depends: re_mcp_db.h, re_mcp_live, re_str. No heap.
 #include "mcp/re_mcp_db.h"
 
 #include "utils/text/re_str.h"
@@ -11,18 +11,7 @@
 #include <string.h>
 
 static re_mcp_db_t g_db[RE_MCP_DB_MAX];
-static char g_exe[RE_MCP_DB_PATH];
 static unsigned g_seq;
-
-void re_mcp_db_set_exe(const char *path) {
-    if (!path || !path[0])
-        return;
-    snprintf(g_exe, sizeof(g_exe), "%s", path);
-}
-
-const char *re_mcp_db_exe(void) {
-    return g_exe[0] ? g_exe : NULL;
-}
 
 static void clear_current(void) {
     for (size_t i = 0; i < RE_MCP_DB_MAX; i++)
@@ -113,7 +102,6 @@ bool re_mcp_db_close(const char *instance_id, bool *closed) {
     if (!slot)
         return false;
     if (re_str_eq_cstr(re_str(slot->backend), "gui")) {
-        // GUI databases stay open in the TUI; only drop the current flag.
         slot->current = false;
         if (closed)
             *closed = true;
@@ -133,8 +121,7 @@ void re_mcp_db_sync_live(void) {
     slot = find_path(live);
     if (!slot) {
         re_mcp_db_t tmp;
-        if (!re_mcp_db_open(live, current_slot() == NULL, "gui", &tmp))
-            return;
+        (void)re_mcp_db_open(live, current_slot() == NULL, "gui", &tmp);
         return;
     }
     snprintf(slot->backend, sizeof(slot->backend), "%s", "gui");

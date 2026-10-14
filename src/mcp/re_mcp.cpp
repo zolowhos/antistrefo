@@ -24,9 +24,9 @@ constexpr const char *kProtocolVersion = "2025-06-18";
 constexpr const char *kName = "antistrefo";
 constexpr const char *kVersion = "0.1.0";
 constexpr const char *kInstructions =
-    "antistrefo static analysis with an ida-mcp compatible tool surface (ELF, PE): "
-    "open_database, then execute_python for decompile/disasm/xrefs/strings/funcs. "
-    "Call reference(query) for the shim API. GUI live files appear in list_databases.";
+    "antistrefo static analysis with an ida-mcp style tool surface (ELF, PE): "
+    "open_database, then execute_query with op=funcs|disasm|decompile|xrefs|strings|.... "
+    "Call reference(query) for ops. No Python. GUI live files appear in list_databases.";
 // Note: avoid ASCII ';' in MCP JSON strings. CMake tests store frames in lists
 // and treat ';' as a list separator.
 constexpr int kFrameMax = 1 << 20;
@@ -130,8 +130,15 @@ static void handle_tools_call(Server *s, re_arena_t *a, double id, const re_jr_t
     const char *path = nullptr;
     if (args) {
         re_str_t direct = re_jr_str(re_jr_get(args, "path"), "");
+        re_str_t iid = re_jr_str(re_jr_get(args, "instance_id"), "");
         if (direct.n)
             path = re_arena_strdup(a, direct.p);
+        else if (iid.n) {
+            const char *inst = re_arena_strndup(a, iid.p, iid.n);
+            const char *p = re_mcp_db_path(inst);
+            if (p)
+                path = re_arena_strdup(a, p);
+        }
     }
     if (!path) {
         const char *live = re_mcp_live_path();
