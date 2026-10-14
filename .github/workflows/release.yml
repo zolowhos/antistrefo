@@ -79,32 +79,28 @@ jobs:
         with:
           arch: x64
 
-      - name: Install Ninja and LLVM
+      - name: Install Ninja
         shell: bash
         run: |
+          # Prefer the VS-bundled clang-cl (msvc-dev-cmd PATH) over a Chocolatey
+          # LLVM install so clang-format matches the rest of the Windows SDK tools.
           choco install ninja -y --no-progress
-          choco install llvm -y --no-progress
-          echo "C:/Program Files/LLVM/bin" >> "$GITHUB_PATH"
+          which clang-cl
+          clang-cl --version
+          which clang-format || true
+          clang-format --version || true
 
       - name: Configure (clang-cl-release)
         shell: bash
-        run: |
-          export PATH="/c/Program Files/LLVM/bin:$PATH"
-          which clang-cl
-          clang-cl --version
-          cmake --preset clang-cl-release
+        run: cmake --preset clang-cl-release
 
       - name: Build
         shell: bash
-        run: |
-          export PATH="/c/Program Files/LLVM/bin:$PATH"
-          cmake --build --preset clang-cl-release --parallel
+        run: cmake --build --preset clang-cl-release --parallel
 
       - name: Test
         shell: bash
-        run: |
-          export PATH="/c/Program Files/LLVM/bin:$PATH"
-          ctest --preset clang-cl-release --output-on-failure
+        run: ctest --preset clang-cl-release --output-on-failure
 
       - name: Stage artifact
         shell: bash

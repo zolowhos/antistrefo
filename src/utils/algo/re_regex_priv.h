@@ -13,8 +13,8 @@ extern "C" {
 
 #include "utils/algo/re_regex.h"
 
-#define RX_NONE ((size_t) - 2)
-#define RX_FAIL ((size_t) - 1)
+#define RX_NONE (~(size_t)1)
+#define RX_FAIL (~(size_t)0)
 
 typedef enum {
     RXI_CHAR,

@@ -15,7 +15,7 @@ extern "C" {
 
 #define RE_PATH_SEP '/'
 #define RE_PATH_SEP_ALT '\\'
-#define RE_PATH_NPOS ((size_t) - 1)
+#define RE_PATH_NPOS (~(size_t)0)
 
 static inline bool re_path_is_sep(char c) {
     return c == RE_PATH_SEP || c == RE_PATH_SEP_ALT;
