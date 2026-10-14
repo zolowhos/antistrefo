@@ -32,6 +32,7 @@ extern "C" {
 #include "utils/text/re_str.h"
 #include "utils/text/re_strbuf.h"
 #include "utils/text/re_text.h"
+#include "utils/tui/re_console.h"
 #include "utils/tui/re_layout.h"
 #include "utils/tui/re_screen.h"
 #include "utils/tui/re_syntax.h"

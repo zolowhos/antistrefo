@@ -13,6 +13,20 @@ extern "C" {
 
 #include "utils/tui/re_screen.h"
 
+// Console band: one titled rule plus four log lines. Body chrome is menu, pages,
+// that band, and the bottom border (eight rows total).
+#define RE_LAYOUT_CONSOLE_LINES 4u
+#define RE_LAYOUT_CONSOLE_BAND 5u
+#define RE_LAYOUT_CHROME 8u
+
+// Which pane a wheel event over (row, col) should scroll.
+typedef enum {
+    RE_LAYOUT_WHEEL_NONE = 0,
+    RE_LAYOUT_WHEEL_LIST,
+    RE_LAYOUT_WHEEL_PAGE,
+    RE_LAYOUT_WHEEL_CONSOLE,
+} re_layout_wheel_t;
+
 // Everything the arrangement draws, as plain fields. A struct of pointers rather than
 // a builder API, because the arrangement is filled in once per redraw by the caller
 // and a builder would only add a second spelling of the same thing.
@@ -61,9 +75,16 @@ typedef struct {
     const char *status;
     const char *caret;
 
+    // Full-width console band above the bottom border: up to four log lines.
+    const char *const *console;
+    size_t n_console;
+
     // the split. 0 asks for the minimum, which is the honest answer on a narrow
     // terminal rather than a pane one column wide.
     uint16_t left_w;
+
+    // Filled by compose: the splitter column actually used for this frame.
+    uint16_t split;
 
     // The first screen, before there is a file. When welcome is set the body is one
     // framed box carrying the message and a single button, and the split, the list and
@@ -93,12 +114,17 @@ typedef struct {
     uint8_t rows_drawn;
 } re_layout_t;
 
-// The body's height on a frame of this many rows: the menu row, the page row and the
+// The body's height on a frame of this many rows: menu, pages, console band and the
 // bottom edge are not the body. The composer and any caller that sizes a pane use the
 // same number, or a pane is sized to rows the reader cannot see.
 static inline size_t re_layout_body_rows(uint16_t rows) {
-    return rows > 3u ? (size_t)rows - 3u : 1u;
+    return rows > RE_LAYOUT_CHROME ? (size_t)rows - RE_LAYOUT_CHROME : 1u;
 }
+
+// Which pane owns a wheel over (row, col). Body left of split is the list, body right
+// of split is the page, and the console band is its own target. The splitter column
+// itself and chrome outside those bands return NONE.
+re_layout_wheel_t re_layout_wheel_at(uint16_t rows, uint16_t split, uint16_t row, uint16_t col);
 
 // Draw the arrangement onto a screen. L is not const because the composer fills in
 // button_zone, and only it knows the id: zones are handed out in drawing order. Clips to the

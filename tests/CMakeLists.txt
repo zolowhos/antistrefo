@@ -44,6 +44,16 @@ if(MSVC)
 endif()
 add_test(NAME screen COMMAND re_test_screen)
 
+# Console band, ring scrollback, and hover-wheel hit targets for the GUI layout.
+add_executable(re_test_console test_console.c)
+target_link_libraries(re_test_console PRIVATE re_core re_utils re_flags)
+if(MSVC)
+    set_property(TARGET re_test_console
+        PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_definitions(re_test_console PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+add_test(NAME console COMMAND re_test_console)
+
 # The interactive front end's pure half: the event decoder, the focus order, and the
 # frame diff. The platform file is deliberately absent, because a test that needs a
 # terminal is a test that only runs on somebody's machine.

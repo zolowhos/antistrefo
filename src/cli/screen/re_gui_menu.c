@@ -55,17 +55,6 @@ static uint16_t menu_x(int menu) {
     return x;
 }
 
-static void note(re_gui_menu_ctx_t *c, const char *text) {
-    size_t n = 0;
-    if (!c->note || !c->note_n || !text)
-        return;
-    while (text[n] && n + 1u < c->note_n)
-        n++;
-    for (size_t i = 0; i < n; i++)
-        c->note[i] = text[i];
-    c->note[n] = 0;
-}
-
 static void run_item(re_gui_menu_ctx_t *c, int menu, int item) {
     if (menu == 1 && item == 0 && c->sel && *c->sel + 1u < c->nfunc)
         (*c->sel)++;
@@ -84,8 +73,8 @@ static void run_item(re_gui_menu_ctx_t *c, int menu, int item) {
         *c->color = !*c->color;
     if (menu == 4 && item == 1 && c->syntax)
         *c->syntax = !*c->syntax;
-    if (menu == 5 && item == 0)
-        note(c, "q quit  tab focus  arrows select  left/right page");
+    if (menu == 5 && item == 0 && c->console)
+        re_console_push(c->console, "q quit  tab focus  arrows select  left/right page");
     if (menu == 5 && item == 1 && c->quit)
         *c->quit = true;
     if (c->repaint)
@@ -159,9 +148,6 @@ void re_gui_menu_draw(re_screen_t *s, re_gui_menu_ctx_t *c) {
         re_screen_put_run(s, (uint16_t)(1u + i), (uint16_t)(x + 1u), (uint16_t)(x + 1u + w),
                           items[i], (uint8_t)RE_ST_LABEL, zone);
     }
-    if (c->note && c->note[0] && s->rows > 2)
-        re_screen_put_run(s, (uint16_t)(s->rows - 1u), 1, s->cols, c->note, (uint8_t)RE_ST_LABEL,
-                          RE_SCREEN_ZONE_NONE);
 }
 
 void re_gui_menu_bind(re_ui_t *u, re_gui_menu_ctx_t *c) {
