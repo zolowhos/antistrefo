@@ -4,10 +4,10 @@
 // Depends: re_mcp_exec.h, re_mcp_db, re_jr. Spawns python3; never talks stdio MCP.
 #include "mcp/re_mcp_exec.h"
 
-#include "mcp/re_mcp_db.h"
 #include "utils/json/re_jr.h"
 #include "utils/text/re_str.h"
 #include "utils/text/re_strbuf.h"
+#include "mcp/re_mcp_db.h"
 
 #include <cstdio>
 #include <cstring>
@@ -134,7 +134,7 @@ bool re_mcp_exec_python(const char *db_path, const char *code, re_strbuf_t *out)
         return false;
     }
     if (!shim_path(shim, sizeof(shim))) {
-        tool_err(out, "ida_mcp_shim.py not found; set ANTISTREFO_SHIM");
+        tool_err(out, "ida_mcp_shim.py not found - set ANTISTREFO_SHIM");
         return false;
     }
     if (!write_temp(code ? code : "", code_path, sizeof(code_path))) {
@@ -158,7 +158,7 @@ bool re_mcp_exec_python(const char *db_path, const char *code, re_strbuf_t *out)
 const char *re_mcp_reference_text(const char *query) {
     static const char kDefault[] =
         "antistrefo ida-mcp shim (subset of ida-domain):\n"
-        "  db.functions.get_all() / get_at(ea) / iter -> start_ea,end_ea,name,size; .decompile()\n"
+        "  db.functions.get_all() / get_at(ea) / iter -> start_ea,end_ea,name,size .decompile()\n"
         "  db.strings -> address,length,text\n"
         "  db.segments.get_all() -> section rows\n"
         "  db.xrefs.to_ea(ea) / from_ea(ea)\n"
@@ -167,14 +167,12 @@ const char *re_mcp_reference_text(const char *query) {
         "  ida_hexrays.decompile(ea) -> Tier B C-like source string\n"
         "Mutating APIs (rename, patch, types, save) are unsupported.\n";
     static const char kDecomp[] =
-        "Decompile: fn = db.functions.get_at(ea); src = fn.decompile()\n"
+        "Decompile: fn = db.functions.get_at(ea) then src = fn.decompile()\n"
         "Or: ida_hexrays.decompile(ea)\n"
         "Returns Tier B C-like text from antistrefo decompile, not Hex-Rays.\n";
-    static const char kXref[] =
-        "Xrefs: db.xrefs.to_ea(ea) or db.xrefs.from_ea(ea)\n"
-        "Also accepted: db.xrefs.to(ea)\n";
-    static const char kStr[] =
-        "Strings: for s in db.strings: print(hex(s.address), str(s))\n";
+    static const char kXref[] = "Xrefs: db.xrefs.to_ea(ea) or db.xrefs.from_ea(ea)\n"
+                                "Also accepted: db.xrefs.to(ea)\n";
+    static const char kStr[] = "Strings: for s in db.strings: print(hex(s.address), str(s))\n";
     if (!query || !query[0])
         return kDefault;
     re_str_t q = re_str(query);

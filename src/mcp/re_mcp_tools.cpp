@@ -4,8 +4,8 @@
 // Depends: re_mcp_tools.h, re_cmds. Commands get the same argv shape the CLI passes.
 #include "mcp/re_mcp_tools.h"
 
-#include "cli/cmds/re_cmds.h"
 #include "utils/json/re_jr.h"
+#include "cli/cmds/re_cmds.h"
 
 #include <cstdio>
 #include <cstring>
@@ -27,7 +27,9 @@ struct ToolSpec {
 constexpr ArgSpec kEnd = {NULL, NULL, NULL, false};
 const ToolSpec kToolArgs[] = {
     {"open_database",
-     {{"set_current", NULL, "become the default target for execute_python", false}, kEnd, kEnd,
+     {{"set_current", NULL, "become the default target for execute_python", false},
+      kEnd,
+      kEnd,
       kEnd}},
     {"execute_python",
      {{"code", NULL, "python against the open database", false},
@@ -83,36 +85,33 @@ bool is_ida_tool(const char *name) {
 // Fixed ida-mcp input schemas for the six tools (plus generic path for open).
 bool schema_ida(const char *name, re_strbuf_t *b) {
     if (re_str_eq_cstr(re_str(name), "open_database")) {
-        re_strbuf_puts(b,
-                       "{\"type\":\"object\",\"properties\":{"
-                       "\"path\":{\"type\":\"string\",\"description\":"
-                       "\"Path to a local executable or IDB. A GUI instance is used when "
-                       "available.\"},"
-                       "\"set_current\":{\"type\":\"boolean\",\"description\":"
-                       "\"Whether this database should become the default target for "
-                       "execute_python().\",\"default\":true},"
-                       "\"load_options\":{\"description\":"
-                       "\"Accepted for parity; ignored by antistrefo.\"}"
-                       "},\"required\":[\"path\"]}");
+        re_strbuf_puts(b, "{\"type\":\"object\",\"properties\":{"
+                          "\"path\":{\"type\":\"string\",\"description\":"
+                          "\"Path to a local executable or IDB. A GUI instance is used when "
+                          "available.\"},"
+                          "\"set_current\":{\"type\":\"boolean\",\"description\":"
+                          "\"Whether this database should become the default target for "
+                          "execute_python().\",\"default\":true},"
+                          "\"load_options\":{\"description\":"
+                          "\"Accepted for parity; ignored by antistrefo.\"}"
+                          "},\"required\":[\"path\"]}");
         return true;
     }
     if (re_str_eq_cstr(re_str(name), "execute_python")) {
-        re_strbuf_puts(b,
-                       "{\"type\":\"object\",\"properties\":{"
-                       "\"code\":{\"type\":\"string\",\"description\":"
-                       "\"Python code that runs against an already-open database.\"},"
-                       "\"instance_id\":{\"description\":\"Optional database instance id.\"},"
-                       "\"timeout\":{\"type\":\"number\",\"description\":"
-                       "\"Accepted for parity; not enforced.\"}"
-                       "},\"required\":[\"code\"]}");
+        re_strbuf_puts(b, "{\"type\":\"object\",\"properties\":{"
+                          "\"code\":{\"type\":\"string\",\"description\":"
+                          "\"Python code that runs against an already-open database.\"},"
+                          "\"instance_id\":{\"description\":\"Optional database instance id.\"},"
+                          "\"timeout\":{\"type\":\"number\",\"description\":"
+                          "\"Accepted for parity; not enforced.\"}"
+                          "},\"required\":[\"code\"]}");
         return true;
     }
     if (re_str_eq_cstr(re_str(name), "reference")) {
-        re_strbuf_puts(b,
-                       "{\"type\":\"object\",\"properties\":{"
-                       "\"query\":{\"type\":\"string\",\"description\":"
-                       "\"Class, method, or reverse-engineering concept to look up.\"}"
-                       "},\"required\":[\"query\"]}");
+        re_strbuf_puts(b, "{\"type\":\"object\",\"properties\":{"
+                          "\"query\":{\"type\":\"string\",\"description\":"
+                          "\"Class, method, or reverse-engineering concept to look up.\"}"
+                          "},\"required\":[\"query\"]}");
         return true;
     }
     if (re_str_eq_cstr(re_str(name), "list_databases")) {
@@ -121,10 +120,9 @@ bool schema_ida(const char *name, re_strbuf_t *b) {
     }
     if (re_str_eq_cstr(re_str(name), "save_database") ||
         re_str_eq_cstr(re_str(name), "close_database")) {
-        re_strbuf_puts(b,
-                       "{\"type\":\"object\",\"properties\":{"
-                       "\"instance_id\":{\"description\":\"Optional database instance id.\"}"
-                       "},\"required\":[]}");
+        re_strbuf_puts(b, "{\"type\":\"object\",\"properties\":{"
+                          "\"instance_id\":{\"description\":\"Optional database instance id.\"}"
+                          "},\"required\":[]}");
         return true;
     }
     return false;

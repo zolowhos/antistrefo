@@ -27,6 +27,8 @@ constexpr const char *kInstructions =
     "antistrefo static analysis with an ida-mcp compatible tool surface (ELF, PE): "
     "open_database, then execute_python for decompile/disasm/xrefs/strings/funcs. "
     "Call reference(query) for the shim API. GUI live files appear in list_databases.";
+// Note: avoid ASCII ';' in MCP JSON strings. CMake tests store frames in lists
+// and treat ';' as a list separator.
 constexpr int kFrameMax = 1 << 20;
 
 static size_t text_len(const char *s) {

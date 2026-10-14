@@ -4,13 +4,13 @@
 // Depends: re_mcp_db, re_mcp_exec, re_jw. MCP omits antistrefo/1 via ida_shape.
 #include "cli/cmds/re_ida_cmds.h"
 
-#include "mcp/re_mcp_db.h"
-#include "mcp/re_mcp_exec.h"
 #include "utils/json/re_jr.h"
 #include "utils/json/re_json.h"
 #include "utils/sys/re_err.h"
 #include "utils/text/re_str.h"
 #include "utils/text/re_strbuf.h"
+#include "mcp/re_mcp_db.h"
+#include "mcp/re_mcp_exec.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -49,7 +49,7 @@ static void emit_open(re_ctx_t *ctx, const re_mcp_db_t *db) {
     re_jw_kcstr(&w, "log_path", "");
     re_jw_knull(&w, "mcp_id");
     re_jw_kcstr(&w, "hint",
-                "Call reference(query) before execute_python; db and ida_domain are available.");
+                "Call reference(query) before execute_python. db and ida_domain are available.");
     end_obj(ctx, &w);
 }
 
@@ -75,8 +75,8 @@ int re_cmd_open_database(re_ctx_t *ctx, const char *path, int argc, char **argv)
             i++;
         set_tok = re_cmd_positional(argc, argv, i + 1);
     }
-    if (set_tok && (re_str_eq_cstr(re_str(set_tok), "0") ||
-                    re_str_eq_cstr(re_str(set_tok), "false")))
+    if (set_tok &&
+        (re_str_eq_cstr(re_str(set_tok), "0") || re_str_eq_cstr(re_str(set_tok), "false")))
         set_cur = false;
     if (!re_mcp_db_open(file, set_cur, "idalib", &db)) {
         RE_ERR_SET(ctx->err, RE_E_IO, "too many databases open");

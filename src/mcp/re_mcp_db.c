@@ -4,8 +4,8 @@
 // Depends: re_mcp_db.h, re_mcp_live, re_str, re_path. No heap.
 #include "mcp/re_mcp_db.h"
 
-#include "mcp/re_mcp_live.h"
 #include "utils/text/re_str.h"
+#include "mcp/re_mcp_live.h"
 
 #include <stdio.h>
 #include <string.h>
