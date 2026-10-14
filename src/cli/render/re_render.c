@@ -289,7 +289,7 @@ int re_render_funcs(re_ctx_t *ctx, const char *path) {
     if (!re_prepare(ctx, path, &f, &pe, &code))
         return re_err_exit_code(ctx->err->code);
     re_func_scan(&code, ctx->arena, &scan);
-    named = re_prep_names(ctx, NULL, &code, &scan, NULL);
+    named = re_prep_names(ctx, path, NULL, &code, &scan, NULL);
     re_report_open(&r, ctx->arena, ctx, tabs, 1);
     re_strbuf_init(&subj, ctx->arena);
     re_strbuf_init(&sum, ctx->arena);

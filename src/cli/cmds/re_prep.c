@@ -4,6 +4,7 @@
 // Depends: re_prep.h.
 #include "cli/cmds/re_prep.h"
 
+#include "features/analysis/re_alt.h"
 #include "features/analysis/re_analyze.h"
 #include "features/data/re_gopath.h"
 #include "features/lib/re_sigfile.h"
@@ -91,10 +92,11 @@ static size_t name_from_image(re_ctx_t *ctx, re_code_t *code, re_fscan_t *scan) 
     return re_symbols_apply(scan, &syms);
 }
 
-size_t re_prep_names(re_ctx_t *ctx, const char *sigfile, re_code_t *code, re_fscan_t *scan,
-                     re_flirt_load_stat_t *stat) {
+size_t re_prep_names(re_ctx_t *ctx, const char *path, const char *sigfile, re_code_t *code,
+                     re_fscan_t *scan, re_flirt_load_stat_t *stat) {
     re_vec_t sigs;
     re_sigdb_t db;
+    re_alt_t alt;
     size_t named = name_from_image(ctx, code, scan);
     if (stat) {
         stat->before = 0;
@@ -107,7 +109,12 @@ size_t re_prep_names(re_ctx_t *ctx, const char *sigfile, re_code_t *code, re_fsc
     if (sigfile)
         re_sigfile_load(ctx->arena, sigfile, &sigs, stat);
     re_sigdb_build(ctx->arena, &sigs, &db);
-    return named + re_flirt_name_all(&db, code, scan);
+    named += re_flirt_name_all(&db, code, scan);
+    // User renames in "<path>.alt" win over image and signature names.
+    re_alt_init(&alt, ctx->arena);
+    if (path && re_alt_load(&alt, path))
+        named += re_alt_apply(scan, &alt);
+    return named;
 }
 
 bool re_parse_addr(re_ctx_t *ctx, re_str_t s, const re_pe_t *pe, uint64_t *out) {

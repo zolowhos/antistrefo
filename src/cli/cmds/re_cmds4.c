@@ -119,7 +119,7 @@ int re_cmd_decompile(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     if (!re_prepare(ctx, path, &f, &pe, &code))
         return re_err_exit_code(ctx->err->code);
     re_func_scan(&code, ctx->arena, &scan);
-    re_prep_names(ctx, NULL, &code, &scan, NULL);
+    re_prep_names(ctx, path, NULL, &code, &scan, NULL);
     if (!pick_func(ctx, &scan, &pe, re_cmd_positional(argc, argv, 1), &fn)) {
         re_file_close(&f);
         return re_err_exit_code(ctx->err->code);
@@ -280,7 +280,7 @@ int re_cmd_cfg(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     if (!re_prepare(ctx, path, &f, &pe, &code))
         return re_err_exit_code(ctx->err->code);
     re_func_scan(&code, ctx->arena, &scan);
-    re_prep_names(ctx, NULL, &code, &scan, NULL);
+    re_prep_names(ctx, path, NULL, &code, &scan, NULL);
     if (!pick_func(ctx, &scan, &pe, re_cmd_positional(argc, argv, 1), &fn)) {
         re_file_close(&f);
         return re_err_exit_code(ctx->err->code);
