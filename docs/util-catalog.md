@@ -55,6 +55,7 @@ and the helper will be needed twice or loops over bytes, add it here first.
 | `re_screen_*` | a cell grid and its widgets: tabs, legend, gutter, scrollbars, status, draw | `re_screen.h` |
 | `re_syntax_*` | colour one C-like line: keywords, types, comments, strings, numbers, calls | `re_syntax.h` |
 | `re_layout_*` | the reference screen arrangement, expressed as a struct and composed | `re_layout.h` |
+| `re_console_*` | fixed ring of short GUI console lines with scrollback | `re_console.h` |
 | `re_ui_*` | hover and click bindings over screen zones | `re_ui.h` |
 
 ## Aggregator

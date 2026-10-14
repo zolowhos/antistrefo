@@ -153,9 +153,34 @@ static void draw_bottom(re_screen_t *s, const frame_t *f) {
     re_screen_put(s, y, last, f->br, (uint8_t)RE_ST_NONE, RE_SCREEN_ZONE_NONE);
 }
 
+// First row of the console band (titled rule). Body and welcome end just above it.
+static uint16_t console_y0(const re_screen_t *s) {
+    return (uint16_t)(s->rows - 1u - RE_LAYOUT_CONSOLE_BAND);
+}
+
+static void draw_console(re_screen_t *s, re_layout_t *L, const frame_t *f) {
+    uint16_t y0 = console_y0(s);
+    uint16_t last = (uint16_t)(s->cols - 1u);
+    uint16_t cx;
+    re_screen_put(s, y0, 0, f->tl, (uint8_t)RE_ST_NONE, RE_SCREEN_ZONE_NONE);
+    cx = dash_n(s, y0, 1, 3, last, f->h);
+    if (cx + 2u < last)
+        cx = bracket_item(s, y0, cx, last, "console", (uint8_t)RE_ST_NONE, RE_SCREEN_ZONE_NONE);
+    cx = dash_n(s, y0, cx, (uint16_t)(last > cx ? (unsigned)(last - cx) : 0u), last, f->h);
+    re_screen_put(s, y0, last, f->tr, (uint8_t)RE_ST_NONE, RE_SCREEN_ZONE_NONE);
+    for (uint16_t i = 0; i < RE_LAYOUT_CONSOLE_LINES; i++) {
+        uint16_t y = (uint16_t)(y0 + 1u + i);
+        re_screen_put(s, y, 0, f->v, (uint8_t)RE_ST_NONE, RE_SCREEN_ZONE_NONE);
+        re_screen_put(s, y, last, f->v, (uint8_t)RE_ST_NONE, RE_SCREEN_ZONE_NONE);
+        if (L->console && i < L->n_console && L->console[i] && last > 2u)
+            re_screen_put_run(s, y, 2, last, L->console[i], (uint8_t)RE_ST_LABEL,
+                              RE_SCREEN_ZONE_NONE);
+    }
+}
+
 static void draw_body(re_screen_t *s, re_layout_t *L, uint16_t split, const frame_t *f) {
     uint16_t last = (uint16_t)(s->cols - 1u);
-    uint16_t y1 = (uint16_t)(s->rows - 1u);
+    uint16_t y1 = console_y0(s);
     for (uint16_t y = 2; y < y1; y++) {
         uint16_t r = (uint16_t)(y - 2u);
         re_screen_put(s, y, 0, f->v, (uint8_t)RE_ST_NONE, RE_SCREEN_ZONE_NONE);
@@ -201,7 +226,7 @@ static void centred(re_screen_t *s, uint16_t y, uint16_t width, const char *text
 
 static void draw_welcome(re_screen_t *s, re_layout_t *L, const frame_t *f) {
     uint16_t last = (uint16_t)(s->cols - 1u);
-    uint16_t y1 = (uint16_t)(s->rows - 1u);
+    uint16_t y1 = console_y0(s);
     re_screen_put(s, 1, 0, f->tl, (uint8_t)RE_ST_NONE, RE_SCREEN_ZONE_NONE);
     (void)dash_n(s, 1, 1, (uint16_t)(last - 1u), last, f->h);
     re_screen_put(s, 1, last, f->tr, (uint8_t)RE_ST_NONE, RE_SCREEN_ZONE_NONE);
@@ -229,6 +254,22 @@ static void draw_welcome(re_screen_t *s, re_layout_t *L, const frame_t *f) {
     centred(s, (uint16_t)(mid + 2u), s->cols, btn, (uint8_t)RE_ST_ACCENT, L->button_zone);
 }
 
+re_layout_wheel_t re_layout_wheel_at(uint16_t rows, uint16_t split, uint16_t row, uint16_t col) {
+    uint16_t cons;
+    if (rows <= RE_LAYOUT_CHROME)
+        return RE_LAYOUT_WHEEL_NONE;
+    cons = (uint16_t)(rows - 1u - RE_LAYOUT_CONSOLE_BAND);
+    if (row >= cons && row + 1u < rows)
+        return RE_LAYOUT_WHEEL_CONSOLE;
+    if (!split || row < 2u || row >= cons)
+        return RE_LAYOUT_WHEEL_NONE;
+    if (col < split)
+        return RE_LAYOUT_WHEEL_LIST;
+    if (col > split)
+        return RE_LAYOUT_WHEEL_PAGE;
+    return RE_LAYOUT_WHEEL_NONE;
+}
+
 uint16_t re_layout_compose(re_screen_t *s, re_layout_t *L) {
     if (!s->cell || !L)
         return 0;
@@ -238,7 +279,9 @@ uint16_t re_layout_compose(re_screen_t *s, re_layout_t *L) {
     L->tabs_drawn = 0;
     L->row_zone = RE_SCREEN_ZONE_NONE;
     L->rows_drawn = 0;
-    if (s->rows < 4u || s->cols < 16u) {
+    L->split = 0;
+    // Menu, pages, at least one body row, console band, and the bottom border.
+    if (s->rows < 12u || s->cols < 16u) {
         re_screen_clear(s);
         re_screen_put_run(s, 0, 0, s->cols, L->file ? L->file : "", (uint8_t)RE_ST_TITLE,
                           RE_SCREEN_ZONE_NONE);
@@ -249,14 +292,17 @@ uint16_t re_layout_compose(re_screen_t *s, re_layout_t *L) {
     draw_menu(s, L, &f);
     if (L->welcome) {
         draw_welcome(s, L, &f);
+        draw_console(s, L, &f);
         draw_bottom(s, &f);
-        return (uint16_t)(s->rows - 2u);
+        return (uint16_t)re_layout_body_rows(s->rows);
     }
     uint16_t split = left_width(s->cols, L->left_w);
     if (split + 8u >= s->cols)
         split = (uint16_t)(s->cols / 3u);
+    L->split = split;
     draw_pages(s, L, split, &f);
     draw_body(s, L, split, &f);
+    draw_console(s, L, &f);
     draw_bottom(s, &f);
     return (uint16_t)re_layout_body_rows(s->rows);
 }

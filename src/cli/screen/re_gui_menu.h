@@ -7,6 +7,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#include "utils/tui/re_console.h"
 #include "utils/tui/re_screen.h"
 #include "utils/tui/re_ui.h"
 
@@ -28,8 +29,7 @@ typedef struct {
     uint8_t bar; // zone of File, the first toolbar control
     uint8_t *zone;
     uint8_t *nitems;
-    char *note;
-    size_t note_n;
+    re_console_t *console; // Help and other menu notes land here
 } re_gui_menu_ctx_t;
 
 // Draw the open dropdown under its toolbar button. No-op when nothing is open.

@@ -1,9 +1,7 @@
 // re_gui.c - the interactive view over an analysed file.
 // Module: cli (C11).
 // Owns: the loop, the selection, and the mapping from keys to state.
-// Depends: re_gui.h, re_term, re_input, re_focus, re_draw, re_screen, re_layout,
-//           re_analysis, re_code. Decoding and rendering are the shared backend's
-//           job, reached the same way every other command reaches them.
+// Depends: re_gui.h, term, input, focus, draw, layout, console, analysis, code.
 #include "cli/screen/re_gui.h"
 
 #include "features/analysis/re_analyze.h"
@@ -12,6 +10,7 @@
 #include "features/data/re_vtable.h"
 #include "features/dec/re_decompile.h"
 #include "utils/mem/re_buf.h"
+#include "utils/tui/re_console.h"
 #include "utils/tui/re_layout.h"
 #include "utils/tui/re_screen.h"
 #include "utils/tui/re_ui.h"
@@ -67,7 +66,8 @@ typedef struct gui {
     uint8_t menu_n;
     bool syntax;
     bool color;
-    char note[80];
+    uint16_t split;
+    re_console_t console;
     re_arena_t fana;
     char path[512];
     const char **body;
@@ -134,6 +134,13 @@ static void show_lines(gui_t *g, const char **text, const uint8_t *marks, size_t
     g->body_base = 0;
 }
 
+static void page_scroll(gui_t *g, int down) {
+    if (down > 0 && g->page_rows && g->page_off + 1u < g->page_rows)
+        g->page_off++;
+    else if (down < 0 && g->page_off)
+        g->page_off--;
+}
+
 static void body_for(gui_t *g, re_arena_t *a, re_gui_listing_t *ls, pseudo_t *ps, size_t sel,
                      uint16_t rows) {
     const re_func_t *f = re_func_at(&g->an.scan, sel);
@@ -164,25 +171,35 @@ static void body_for(gui_t *g, re_arena_t *a, re_gui_listing_t *ls, pseudo_t *ps
     show_lines(g, g->tab ? ls->text : NULL, NULL, g->tab ? ls->n : 0u, ls->total);
 }
 
+static void take_layout(gui_t *g, const re_layout_t *L) {
+    g->button_zone = L->button_zone;
+    g->open_zone = L->open_zone;
+    g->tab_zone = L->tab_zone;
+    g->tabs_drawn = L->tabs_drawn;
+    g->row_zone = L->row_zone;
+    g->rows_drawn = L->rows_drawn;
+    g->split = L->split;
+}
+
 static void compose(re_screen_t *s, gui_t *g, const re_gui_funcs_t *l) {
     static const char *kPages[RE_PAGE_COUNT] = {"graph View", "pseudo-code", "hex View",
                                                 "structures", "imports",     "exports"};
     static const char *kMenu[] = {"File", "Edit", "Jump", "Search", "Options", "Help"};
-
+    const char *clog[RE_CONSOLE_VIEW];
     re_layout_t L = {0};
     L.toolbar = kMenu;
     L.n_toolbar = 6;
     L.mark = "antistrefo 0.1.0";
     L.left_w = 28;
+    L.console = clog;
+    L.n_console = re_console_view(&g->console, clog);
     g->button_zone = RE_SCREEN_ZONE_NONE;
-
     if (!g->loaded) {
         L.file = "antistrefo";
         L.welcome = "load a file here";
         L.button = "Load";
         re_layout_compose(s, &L);
-        g->button_zone = L.button_zone;
-        g->open_zone = L.open_zone;
+        take_layout(g, &L);
         g->tab_zone = RE_SCREEN_ZONE_NONE;
         g->tabs_drawn = 0;
         g->row_zone = RE_SCREEN_ZONE_NONE;
@@ -190,10 +207,8 @@ static void compose(re_screen_t *s, gui_t *g, const re_gui_funcs_t *l) {
         re_focus_build(&g->focus, s);
         return;
     }
-
     const char *lrows[RE_GUI_LIST_ROWS];
     re_gui_funcs_window(g->sel, l, lrows, RE_GUI_LIST_ROWS);
-
     L.file = g->path;
     L.list_title = "Functions";
     L.rows = lrows;
@@ -208,12 +223,7 @@ static void compose(re_screen_t *s, gui_t *g, const re_gui_funcs_t *l) {
     L.marks = g->body_marks;
     L.syntax = g->tab == 1 && g->syntax;
     re_layout_compose(s, &L);
-    g->button_zone = L.button_zone;
-    g->open_zone = L.open_zone;
-    g->tab_zone = L.tab_zone;
-    g->tabs_drawn = L.tabs_drawn;
-    g->row_zone = L.row_zone;
-    g->rows_drawn = L.rows_drawn;
+    take_layout(g, &L);
     for (size_t i = 0; i < g->rows_drawn && i < RE_GUI_LIST_ROWS; i++) {
         g->row_arg[i].g = g;
         g->row_arg[i].index = re_gui_funcs_index(g->sel, l, i);
@@ -340,14 +350,24 @@ static void bind_actions(gui_t *g) {
             re_ui_bind(&g->ui, (uint8_t)(g->row_zone + i), on_row, NULL, &g->row_arg[i]);
 }
 
+static void wheel_at(gui_t *g, uint16_t rows, const re_ev_t *ev) {
+    int down = ev->button == RE_MOUSE_WHEEL_DOWN ? 1 : -1;
+    re_layout_wheel_t w = re_layout_wheel_at(rows, g->split, ev->row, ev->col);
+    if (w == RE_LAYOUT_WHEEL_LIST) {
+        if (down > 0)
+            g->sel++;
+        else if (g->sel)
+            g->sel--;
+    } else if (w == RE_LAYOUT_WHEEL_PAGE) {
+        page_scroll(g, down);
+    } else if (w == RE_LAYOUT_WHEEL_CONSOLE) {
+        re_console_scroll(&g->console, down);
+    }
+}
+
 static void feed_pointer(gui_t *g, re_screen_t *frame, const re_ev_t *ev) {
     if (ev->button == RE_MOUSE_WHEEL_UP || ev->button == RE_MOUSE_WHEEL_DOWN) {
-        if (ev->button == RE_MOUSE_WHEEL_DOWN) {
-            if (g->page_rows && g->page_off + 1u < g->page_rows)
-                g->page_off++;
-        } else if (g->page_off) {
-            g->page_off--;
-        }
+        wheel_at(g, frame->rows, ev);
         return;
     }
     if ((ev->button & 64u) != 0)
@@ -374,22 +394,10 @@ static bool turn(gui_t *g, re_arena_t *a, re_screen_t *frame, re_gui_funcs_t *li
     body_for(g, a, ls, ps, g->sel, frame->rows);
     compose(frame, g, list);
     {
-        re_gui_menu_ctx_t mc = {0};
-        mc.sel = &g->sel;
-        mc.nfunc = list->n;
-        mc.tab = &g->tab;
-        mc.ntab = RE_PAGE_COUNT;
-        mc.page_off = &g->page_off;
-        mc.repaint = &g->repaint;
-        mc.quit = &g->quit;
-        mc.syntax = &g->syntax;
-        mc.color = &g->color;
-        mc.open = &g->menu_open;
-        mc.bar = g->open_zone;
-        mc.zone = &g->menu_zone;
-        mc.nitems = &g->menu_n;
-        mc.note = g->note;
-        mc.note_n = sizeof(g->note);
+        re_gui_menu_ctx_t mc = {&g->sel,      list->n,       &g->tab,      RE_PAGE_COUNT,
+                                &g->page_off, &g->repaint,   &g->quit,     &g->syntax,
+                                &g->color,    &g->menu_open, g->open_zone, &g->menu_zone,
+                                &g->menu_n,   &g->console};
         re_gui_menu_draw(frame, &mc);
         bind_actions(g);
         re_gui_menu_bind(&g->ui, &mc);
@@ -445,6 +453,7 @@ int re_cmd_gui(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     gui_t g;
     memset(&g, 0, sizeof(g));
     re_ui_init(&g.ui);
+    re_console_init(&g.console);
     g.menu_open = -1;
     g.syntax = true;
     g.color = true;
