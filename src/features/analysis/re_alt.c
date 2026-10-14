@@ -6,7 +6,6 @@
 
 #include "utils/mem/re_buf.h"
 #include "utils/text/re_hex.h"
-#include "utils/text/re_strbuf.h"
 
 #include <stdio.h>
 #include <string.h>
