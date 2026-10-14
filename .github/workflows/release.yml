@@ -1,0 +1,174 @@
+# release.yml - build Clang release binaries and attach them to a GitHub Release.
+# Module: ci (GitHub Actions).
+# Owns: Linux clang-release and Windows clang-cl-release artifacts for tagged releases.
+# Depends: CMake presets clang-release / clang-cl-release; Capstone via FetchContent.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and (re)attach assets to"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    name: Linux x86_64 (clang-release)
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Install Clang, LLVM, Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang llvm ninja-build build-essential
+
+      - name: Configure (clang-release)
+        run: cmake --preset clang-release
+
+      - name: Build
+        run: cmake --build --preset clang-release --parallel
+
+      - name: Test
+        run: ctest --preset clang-release --output-on-failure
+
+      - name: Stage artifact
+        run: |
+          mkdir -p dist
+          install -m 0755 build/clang-release/bin/antistrefo \
+            "dist/antistrefo-${RELEASE_TAG}-linux-x86_64"
+          file "dist/antistrefo-${RELEASE_TAG}-linux-x86_64"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: dist/antistrefo-*-linux-x86_64
+          if-no-files-found: error
+
+  windows:
+    name: Windows x86_64 (clang-cl-release)
+    runs-on: windows-2022
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Ninja and LLVM
+        shell: bash
+        run: |
+          choco install ninja -y --no-progress
+          choco install llvm -y --no-progress
+          echo "C:/Program Files/LLVM/bin" >> "$GITHUB_PATH"
+
+      - name: Configure (clang-cl-release)
+        shell: bash
+        run: |
+          export PATH="/c/Program Files/LLVM/bin:$PATH"
+          which clang-cl
+          clang-cl --version
+          cmake --preset clang-cl-release
+
+      - name: Build
+        shell: bash
+        run: |
+          export PATH="/c/Program Files/LLVM/bin:$PATH"
+          cmake --build --preset clang-cl-release --parallel
+
+      - name: Test
+        shell: bash
+        run: |
+          export PATH="/c/Program Files/LLVM/bin:$PATH"
+          ctest --preset clang-cl-release --output-on-failure
+
+      - name: Stage artifact
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp build/clang-cl-release/bin/antistrefo.exe \
+            "dist/antistrefo-${RELEASE_TAG}-windows-x86_64.exe"
+          ls -la dist/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: dist/antistrefo-*-windows-x86_64.exe
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-x86_64
+          path: dist
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-x86_64
+          path: dist
+
+      - name: List assets
+        run: ls -la dist/
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: antistrefo ${{ env.RELEASE_TAG }}
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            dist/antistrefo-*-linux-x86_64
+            dist/antistrefo-*-windows-x86_64.exe
+          body: |
+            Clang/LLVM primary release builds of **antistrefo**.
+
+            ## Downloads
+            - **Linux x86_64**: `antistrefo-${{ env.RELEASE_TAG }}-linux-x86_64` (preset `clang-release`, `-O2` + LTO)
+            - **Windows x86_64**: `antistrefo-${{ env.RELEASE_TAG }}-windows-x86_64.exe` (preset `clang-cl-release`, static CRT + LTO)
+
+            ## Build defaults
+            - `RE_ENABLE_DISASM=ON`
+            - `RE_ENABLE_CAPSTONE=ON` (Capstone 5.x for ARM-64 and other gap arches)
+            - Native x86-64 decoder is built-in; Capstone covers ARM-64 via the `re_disasm` seam.
+
+            ## Verify
+            ```bash
+            chmod +x antistrefo-*-linux-x86_64
+            ./antistrefo-*-linux-x86_64 triage --help
+            ```
+            On Windows, run `antistrefo-*-windows-x86_64.exe triage --help`.
