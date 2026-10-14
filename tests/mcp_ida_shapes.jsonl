@@ -1,0 +1,8 @@
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ida-shape-test","version":"1.0"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"open_database","arguments":{"path":"__FIXTURE__","set_current":true}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_databases","arguments":{}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"execute_query","arguments":{"op":"info"}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"reference","arguments":{"query":"decompile function"}}}
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"save_database","arguments":{}}}
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"close_database","arguments":{}}}
