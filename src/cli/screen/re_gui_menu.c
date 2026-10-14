@@ -8,12 +8,30 @@
 
 typedef struct {
     re_gui_menu_ctx_t *c;
+    re_ui_t *ui;
     int menu;
     int item;
 } menu_arg_t;
 
 static menu_arg_t g_arg[16];
 static size_t g_narg;
+
+// True when zone is this menu's toolbar title or one of its open dropdown rows.
+static bool menu_owns_zone(const re_gui_menu_ctx_t *c, int menu, uint8_t zone) {
+    uint8_t z0;
+    uint8_t n;
+    if (!c || zone == RE_SCREEN_ZONE_NONE)
+        return false;
+    if (zone == (uint8_t)(c->bar + menu))
+        return true;
+    if (!c->open || *c->open != menu || !c->zone || !c->nitems)
+        return false;
+    z0 = *c->zone;
+    n = *c->nitems;
+    if (z0 == RE_SCREEN_ZONE_NONE || n == 0)
+        return false;
+    return zone >= z0 && zone < (uint8_t)(z0 + n);
+}
 
 static const char *const kEdit[] = {"Next function", "Previous function"};
 static const char *const kJump[] = {"First function", "Page top"};
@@ -94,11 +112,23 @@ static void on_bar(void *user) {
 
 static void on_hover(void *user, bool over) {
     menu_arg_t *a = user;
-    if (!a || !a->c || !a->c->open || !over)
+    if (!a || !a->c || !a->c->open || !a->ui)
         return;
-    if (*a->c->open == a->menu)
+    if (over) {
+        if (*a->c->open == a->menu)
+            return;
+        *a->c->open = a->menu;
+        if (a->c->repaint)
+            *a->c->repaint = true;
         return;
-    *a->c->open = a->menu;
+    }
+    // Leave: set_hot already stored the new hot zone. Stay open while the pointer
+    // is still on this title or its dropdown; dismiss only when it left the menu.
+    if (*a->c->open != a->menu)
+        return;
+    if (menu_owns_zone(a->c, a->menu, a->ui->hot))
+        return;
+    *a->c->open = -1;
     if (a->c->repaint)
         *a->c->repaint = true;
 }
@@ -109,12 +139,13 @@ static void on_item(void *user) {
         run_item(a->c, a->menu, a->item);
 }
 
-static menu_arg_t *arg(re_gui_menu_ctx_t *c, int menu, int item) {
+static menu_arg_t *arg(re_gui_menu_ctx_t *c, re_ui_t *ui, int menu, int item) {
     menu_arg_t *a;
     if (g_narg >= 16)
         return NULL;
     a = &g_arg[g_narg++];
     a->c = c;
+    a->ui = ui;
     a->menu = menu;
     a->item = item;
     return a;
@@ -157,7 +188,7 @@ void re_gui_menu_bind(re_ui_t *u, re_gui_menu_ctx_t *c) {
     if (!u || !c || c->bar == RE_SCREEN_ZONE_NONE)
         return;
     for (menu = 1; menu <= 5; menu++) {
-        menu_arg_t *a = arg(c, menu, -1);
+        menu_arg_t *a = arg(c, u, menu, -1);
         if (a)
             re_ui_bind(u, (uint8_t)(c->bar + menu), on_bar, on_hover, a);
     }
@@ -165,8 +196,8 @@ void re_gui_menu_bind(re_ui_t *u, re_gui_menu_ctx_t *c) {
         return;
     items_of(*c->open, &n);
     for (i = 0; i < n && i < (c->nitems ? *c->nitems : 0u); i++) {
-        menu_arg_t *a = arg(c, *c->open, (int)i);
+        menu_arg_t *a = arg(c, u, *c->open, (int)i);
         if (a)
-            re_ui_bind(u, (uint8_t)(*c->zone + i), on_item, NULL, a);
+            re_ui_bind(u, (uint8_t)(*c->zone + i), on_item, on_hover, a);
     }
 }

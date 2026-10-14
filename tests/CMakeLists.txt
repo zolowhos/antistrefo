@@ -54,6 +54,17 @@ if(MSVC)
 endif()
 add_test(NAME console COMMAND re_test_console)
 
+# Top-bar menu hover open and leave-dismiss (dropdown stays while over its items).
+add_executable(re_test_gui_menu test_gui_menu.c
+    ${CMAKE_SOURCE_DIR}/src/cli/screen/re_gui_menu.c)
+target_link_libraries(re_test_gui_menu PRIVATE re_core re_utils re_flags)
+if(MSVC)
+    set_property(TARGET re_test_gui_menu
+        PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_definitions(re_test_gui_menu PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+add_test(NAME gui_menu COMMAND re_test_gui_menu)
+
 # The interactive front end's pure half: the event decoder, the focus order, and the
 # frame diff. The platform file is deliberately absent, because a test that needs a
 # terminal is a test that only runs on somebody's machine.
