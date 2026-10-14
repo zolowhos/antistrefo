@@ -5,6 +5,7 @@
 //           re_strings, re_regions, re_stack, re_flirt, re_clock.
 #include "features/analysis/re_analyze.h"
 
+#include "features/analysis/re_alt.h"
 #include "features/code/re_func.h"
 #include "features/code/re_seeds.h"
 #include "features/data/re_vtable.h"
@@ -341,6 +342,14 @@ bool re_analysis_open(re_analysis_t *an, re_arena_t *a, const char *path) {
     }
     for (int i = 0; i < RE_PASS_COUNT; i++)
         run_pass(an, a, (re_pass_t)i);
+    // Sidecar renames after every pass so the scoreboard is not disturbed and the
+    // GUI / decompiler / live MCP snapshot all see the same display names.
+    if (an->has_code && RE_VEC_LEN(&an->scan.funcs)) {
+        re_alt_t alt;
+        re_alt_init(&alt, a);
+        if (re_alt_load(&alt, path))
+            re_alt_apply(&an->scan, &alt);
+    }
     an->ok = true;
     return true;
 }

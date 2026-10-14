@@ -155,6 +155,7 @@ src/cli/app/main.cpp
     src/cli/screen/re_gui_menu.c
     src/cli/cmds/re_context_cmd.c
     src/cli/cmds/re_ida_cmds.c
+    src/cli/cmds/re_alt_cmd.c
     src/mcp/re_mcp.cpp
     src/mcp/re_mcp_tools.cpp
     src/mcp/re_mcp_live.c

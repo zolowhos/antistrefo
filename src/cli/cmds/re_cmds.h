@@ -26,6 +26,8 @@ int re_cmd_xrefs(re_ctx_t *ctx, const char *path, int argc, char **argv);
 int re_cmd_jtables(re_ctx_t *ctx, const char *path, int argc, char **argv);
 int re_cmd_disasm(re_ctx_t *ctx, const char *path, int argc, char **argv);
 int re_cmd_context(re_ctx_t *ctx, const char *path, int argc, char **argv);
+int re_cmd_rename(re_ctx_t *ctx, const char *path, int argc, char **argv);
+int re_cmd_list_names(re_ctx_t *ctx, const char *path, int argc, char **argv);
 #ifdef __cplusplus
 }
 #endif

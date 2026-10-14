@@ -127,7 +127,7 @@ int re_cmd_funcs(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_xref_build(&code, &scan, &pe, ctx->arena, &xs);
     const char *sigfile = re_cmd_positional(argc, argv, 1);
     re_flirt_load_stat_t stat;
-    size_t named = re_prep_names(ctx, sigfile, &code, &scan, &stat);
+    size_t named = re_prep_names(ctx, path, sigfile, &code, &scan, &stat);
     re_jw_t w;
     re_jw_init(&w, ctx->arena);
     re_envelope(&w, "funcs", f.whole, &pe);

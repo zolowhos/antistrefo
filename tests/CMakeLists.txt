@@ -254,6 +254,25 @@ if(MSVC)
 endif()
 add_test(NAME names COMMAND re_test_names)
 
+# User renames in a .alt sidecar: round-trip the file format and prove the name
+# lands on the function table the GUI and decompiler read.
+add_executable(re_test_alt test_alt.c)
+target_link_libraries(re_test_alt PRIVATE re_core re_utils re_flags)
+if(MSVC)
+    set_property(TARGET re_test_alt
+        PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_definitions(re_test_alt PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+add_test(NAME alt COMMAND re_test_alt)
+
+# rename command writes .alt and funcs must echo the new display name.
+add_test(NAME alt_rename
+    COMMAND ${CMAKE_COMMAND}
+        -DANTISTREFO=$<TARGET_FILE:antistrefo>
+        -DEMITTER=$<TARGET_FILE:re_test_cfg>
+        -DWORK=${CMAKE_CURRENT_BINARY_DIR}/re_alt_rename_fixture.sys
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/run_alt_rename.cmake)
+
 # The signature suite is separate because a matcher that has stopped matching, or an
 # index that has stopped finding, reads exactly like a database that holds nothing.
 add_executable(re_test_flirt test_flirt.c)
