@@ -1,13 +1,14 @@
-// re_mcp.cpp - MCP stdio server, C++17 shell over the C11 core.
+// re_mcp.cpp - MCP JSON-RPC server, C++17 shell over the C11 core.
 // Module: mcp (C++17).
-// Owns: stdio framing, the JSON-RPC dispatch, and the session registry.
-// Depends: re_mcp.h, re_jr, re_json, re_table, re_cmds. Writes to stdout only frames.
+// Owns: framing, the JSON-RPC dispatch, and the session registry.
+// Depends: re_mcp.h, re_jr, re_table, re_cmds, re_mcp_live. Frames on the given out.
 #include "mcp/re_mcp.h"
 
 #include "utils/json/re_jr.h"
 #include "utils/text/re_util.h"
 #include "cli/app/re_table.h"
 #include "cli/cmds/re_cmds.h"
+#include "mcp/re_mcp_live.h"
 #include "mcp/re_mcp_tools.h"
 
 #include <cstdio>
@@ -16,15 +17,13 @@
 
 namespace {
 
-// MCP stdio uses newline delimited JSON-RPC, not the Content-Length framing that
-// LSP style transports use. Getting this wrong silently corrupts the stream.
+// MCP uses newline delimited JSON-RPC, not the Content-Length framing that LSP
+// style transports use. Getting this wrong silently corrupts the stream.
 constexpr const char *kProtocolVersion = "2025-06-18";
 constexpr const char *kName = "antistrefo";
 constexpr const char *kVersion = "0.1.0";
 constexpr int kFrameMax = 1 << 20;
 
-// The length of a NUL terminated string, without the libc call the rules ban outside
-// the string utility.
 static size_t text_len(const char *s) {
     size_t n = 0;
     while (s[n])
@@ -32,20 +31,11 @@ static size_t text_len(const char *s) {
     return n;
 }
 
-// JSON-RPC error codes. The protocol reserves the low range, so a failure of ours is
-// always in the implementation defined band and a malformed request is the one case
-// the client can fix itself.
 constexpr int kErrParse = -32700;
 constexpr int kErrInvalid = -32600;
 constexpr int kErrNoMethod = -32601;
 constexpr int kErrParams = -32602;
 
-// A session is a name a client chose for a file, so a client can ask the same question
-// about the same file many times without naming the file every time. The parsed
-// artefacts are deliberately not retained here yet: the commands load their own, and
-// threading a shared handle through all of them is a larger change than this commit.
-// What the registry buys today is one place that maps a name to a path, and one place
-// to list what is open, which is what a client needs to manage its own state.
 struct Session {
     const char *name;
     const char *path;
@@ -55,15 +45,17 @@ struct Server {
     re_arena_t arena;
     Session sessions[16];
     size_t n_sessions;
+    FILE *out;
 };
 
-void write_frame(const char *json, size_t n) {
-    std::fwrite(json, 1, n, stdout);
-    std::fputc('\n', stdout);
-    std::fflush(stdout);
+void write_frame(Server *srv, const char *json, size_t n) {
+    FILE *out = srv && srv->out ? srv->out : stdout;
+    std::fwrite(json, 1, n, out);
+    std::fputc('\n', out);
+    std::fflush(out);
 }
 
-void send_error(re_arena_t *a, double id, int code, const char *msg) {
+void send_error(Server *srv, re_arena_t *a, double id, int code, const char *msg) {
     re_strbuf_t b;
     re_strbuf_init(&b, a);
     re_strbuf_puts(&b, "{\"jsonrpc\":\"2.0\",\"id\":");
@@ -71,13 +63,12 @@ void send_error(re_arena_t *a, double id, int code, const char *msg) {
     re_strbuf_puts(&b, ",\"error\":{\"code\":");
     re_strbuf_appendf(&b, "%d", code);
     re_strbuf_puts(&b, ",\"message\":");
-    re_str_t m = re_str(msg);
-    re_jr_escape(&b, m);
+    re_jr_escape(&b, re_str(msg));
     re_strbuf_puts(&b, "}}");
-    write_frame(b.p ? b.p : "{}", b.len);
+    write_frame(srv, b.p ? b.p : "{}", b.len);
 }
 
-void send_result(re_arena_t *a, double id, re_strbuf_t *result) {
+void send_result(Server *srv, re_arena_t *a, double id, re_strbuf_t *result) {
     re_strbuf_t b;
     re_strbuf_init(&b, a);
     re_strbuf_puts(&b, "{\"jsonrpc\":\"2.0\",\"id\":");
@@ -85,14 +76,11 @@ void send_result(re_arena_t *a, double id, re_strbuf_t *result) {
     re_strbuf_puts(&b, ",\"result\":");
     re_strbuf_append(&b, result->p ? result->p : "", result->len);
     re_strbuf_puts(&b, "}");
-    write_frame(b.p ? b.p : "{}", b.len);
+    write_frame(srv, b.p ? b.p : "{}", b.len);
 }
 
-// The result of a tool call: the same object twice, once as text and once as structured
-// content. The text is for a model to read, the structured form is for a program, and
-// both are the same bytes because a client that re-parses text it already has in an
-// object has been handed a second chance to disagree with us.
-void send_tool_result(re_arena_t *a, double id, re_strbuf_t *structured, bool is_error) {
+void send_tool_result(Server *srv, re_arena_t *a, double id, re_strbuf_t *structured,
+                      bool is_error) {
     re_strbuf_t b;
     re_strbuf_init(&b, a);
     re_strbuf_puts(&b, "{\"jsonrpc\":\"2.0\",\"id\":");
@@ -104,37 +92,23 @@ void send_tool_result(re_arena_t *a, double id, re_strbuf_t *structured, bool is
     if (is_error)
         re_strbuf_puts(&b, ",\"isError\":true");
     re_strbuf_puts(&b, "}}");
-    write_frame(b.p ? b.p : "{}", b.len);
+    write_frame(srv, b.p ? b.p : "{}", b.len);
 }
 
-void handle_initialize(re_arena_t *a, double id) {
+void handle_initialize(Server *srv, re_arena_t *a, double id) {
     re_strbuf_t b;
     re_strbuf_init(&b, a);
     re_strbuf_puts(&b, "{\"protocolVersion\":\"");
     re_strbuf_puts(&b, kProtocolVersion);
-    // The capability set is one line and the server name and version are appended
-    // rather than pasted in: a literal cannot be concatenated with a variable, and
-    // pasting the version would mean editing two places to change it.
     re_strbuf_puts(&b, "\",\"capabilities\":{\"tools\":{\"listChanged\":false}}");
     re_strbuf_puts(&b, ",\"serverInfo\":{\"name\":\"");
     re_strbuf_puts(&b, kName);
     re_strbuf_puts(&b, "\",\"version\":\"");
     re_strbuf_puts(&b, kVersion);
     re_strbuf_puts(&b, "\"}}");
-    send_result(a, id, &b);
+    send_result(srv, a, id, &b);
 }
 
-// ---- the session registry ----
-
-// A session is a name a client chose for a file, so it can ask the same question about
-// the same file many times without naming the file every time.
-//
-// It records the path and nothing else. Retaining the parsed artefacts is the obvious
-// next step and it is not free: every command loads its own file through re_prepare, so
-// holding a parse open means threading a handle through all of them, and a half wired
-// cache that is sometimes stale is worse than none. What this buys today is one place
-// that maps a name to a path, which is what a client needs in order to manage its own
-// state, and the seam to grow into.
 static const char *session_path(const Server &s, re_str_t name) {
     for (size_t i = 0; i < s.n_sessions; i++)
         if (re_str_eq(re_str(s.sessions[i].name), name))
@@ -142,8 +116,6 @@ static const char *session_path(const Server &s, re_str_t name) {
     return nullptr;
 }
 
-// The list itself, as both the session/list method and the session_list tool carry
-// the same object, so the two faces cannot drift.
 static void sessions_json(const Server &s, re_arena_t *a, re_strbuf_t *b) {
     (void)a;
     re_strbuf_puts(b, "{\"sessions\":[");
@@ -159,8 +131,6 @@ static void sessions_json(const Server &s, re_arena_t *a, re_strbuf_t *b) {
     re_strbuf_puts(b, "]}");
 }
 
-// Open one session into the buffer. A message is returned when the call cannot be
-// made, and the caller decides whether that is a method error or a tool error.
 static void session_open_json(Server *s, re_arena_t *a, const re_jr_t *args, re_strbuf_t *b,
                               const char **errmsg) {
     *errmsg = nullptr;
@@ -178,8 +148,6 @@ static void session_open_json(Server *s, re_arena_t *a, const re_jr_t *args, re_
         *errmsg = "too many sessions open";
         return;
     }
-    // Both are copied into the server arena, which lives for the whole session, so a
-    // name given once keeps working for every later call.
     s->sessions[s->n_sessions].name = re_arena_strdup(&s->arena, name.p);
     s->sessions[s->n_sessions].path = re_arena_strdup(&s->arena, path.p);
     s->n_sessions++;
@@ -192,23 +160,18 @@ static void handle_session_open(Server *s, re_arena_t *a, double id, const re_jr
     const char *errmsg = nullptr;
     session_open_json(s, a, args, &b, &errmsg);
     if (errmsg)
-        send_error(a, id, kErrParams, errmsg);
+        send_error(s, a, id, kErrParams, errmsg);
     else
-        send_result(a, id, &b);
+        send_result(s, a, id, &b);
 }
 
-static void handle_session_list(re_arena_t *a, double id, const Server &s) {
+static void handle_session_list(Server *s, re_arena_t *a, double id) {
     re_strbuf_t b;
     re_strbuf_init(&b, a);
-    sessions_json(s, a, &b);
-    send_result(a, id, &b);
+    sessions_json(*s, a, &b);
+    send_result(s, a, id, &b);
 }
 
-// ---- tools/call ----
-
-// The session tools are not commands, so they are handled here before the table is
-// consulted, but they are reachable through the same tools/call door: an agent can
-// only call what tools/list names, so the raw session methods are not enough.
 static bool call_session_tool(Server *s, re_arena_t *a, double id, re_str_t name,
                               const re_jr_t *args) {
     re_strbuf_t b;
@@ -224,7 +187,7 @@ static bool call_session_tool(Server *s, re_arena_t *a, double id, re_str_t name
     } else {
         return false;
     }
-    send_tool_result(a, id, &b, is_error);
+    send_tool_result(s, a, id, &b, is_error);
     return true;
 }
 
@@ -239,19 +202,16 @@ static void handle_tools_call(Server *s, re_arena_t *a, double id, const re_jr_t
     bool is_error = false;
     if (!cmd) {
         mcp_tool_error(&out, "no such tool", &is_error);
-        send_tool_result(a, id, &out, is_error);
+        send_tool_result(s, a, id, &out, is_error);
         return;
     }
     if (cmd->interactive) {
-        // A full screen view or a prompt wants the terminal that stdio is using.
-        // Refusing names the reason, where letting it run would answer in escape
-        // sequences and take the protocol stream with it.
         re_strbuf_t msg;
         re_strbuf_init(&msg, a);
         re_jr_escape(&msg, name);
         re_strbuf_puts(&msg, " is interactive, and is not available over MCP");
         mcp_tool_error(&out, msg.p ? msg.p : "interactive", &is_error);
-        send_tool_result(a, id, &out, is_error);
+        send_tool_result(s, a, id, &out, is_error);
         return;
     }
     const char *path = nullptr;
@@ -263,34 +223,26 @@ static void handle_tools_call(Server *s, re_arena_t *a, double id, const re_jr_t
         else if (sess.n)
             path = session_path(*s, sess);
     }
+    // GUI-hosted MCP publishes the open file; tools may omit path and use it.
+    if (!path) {
+        const char *live = re_mcp_live_path();
+        if (live)
+            path = re_arena_strdup(a, live);
+    }
     if (cmd->needs_path && !path) {
-        mcp_tool_error(&out, "no file: give path, or a session from session_open", &is_error);
-        send_tool_result(a, id, &out, is_error);
+        mcp_tool_error(&out, "no file: give path, a session, or open one in the gui", &is_error);
+        send_tool_result(s, a, id, &out, is_error);
         return;
     }
     mcp_run_tool(cmd, path, args, a, &out, &is_error);
-    send_tool_result(a, id, &out, is_error);
+    send_tool_result(s, a, id, &out, is_error);
 }
 
-} // namespace
-
-const char *re_mcp_protocol_version(void) {
-    return kProtocolVersion;
-}
-
-// The params object of a request, or the request itself when there is no params
-// member. Falling back keeps a bare call from having to carry an empty object, which
-// is what a client sending the minimum will do.
 static const re_jr_t *params_of(const re_jr_t *req) {
     const re_jr_t *p = re_jr_get(req, "params");
     return p ? p : req;
 }
 
-// ---- tools/list, generated from the one command table ----
-
-// The session tools are not commands, so the table does not carry them, but a client
-// can only call what tools/list names: leaving them out made the session registry
-// unreachable for every standard MCP client.
 static void session_tools(re_strbuf_t *b) {
     re_strbuf_puts(b, ",");
     re_strbuf_puts(b, "{");
@@ -314,7 +266,7 @@ static void session_tools(re_strbuf_t *b) {
     re_strbuf_puts(b, "\"type\":\"object\",\"properties\":{},\"required\":[]}}");
 }
 
-static void handle_tools_list(re_arena_t *a, double id) {
+static void handle_tools_list(Server *srv, re_arena_t *a, double id) {
     re_strbuf_t b;
     size_t n = 0;
     const re_cmd_t *table = re_cmd_table(&n);
@@ -322,9 +274,6 @@ static void handle_tools_list(re_arena_t *a, double id) {
     re_strbuf_puts(&b, "{\"tools\":[");
     size_t emitted = 0;
     for (size_t i = 0; i < n; i++) {
-        // A command with no function is a table entry for a builtin, not a tool. An
-        // interactive command would take the terminal that stdio is using, so it is
-        // not an invitation either.
         if (!table[i].fn || table[i].interactive)
             continue;
         if (emitted++)
@@ -339,37 +288,32 @@ static void handle_tools_list(re_arena_t *a, double id) {
     }
     session_tools(&b);
     re_strbuf_puts(&b, "]}");
-    send_result(a, id, &b);
+    send_result(srv, a, id, &b);
 }
 
-// Read one frame and answer it. Split out of the loop so the loop stays a loop and
-// this stays readable: a frame is a parse, a dispatch and a write, and mixing those
-// into a byte-at-a-time reader is how the two get confused.
 static void serve_frame(Server *srv, const char *line, size_t n) {
     re_arena_t req;
     re_jr_t root;
     re_arena_init(&req, 0);
     if (!re_jr_parse(&req, line, n, &root) || root.kind != RE_JR_OBJ) {
-        send_error(&req, 0, kErrParse, "malformed request");
+        send_error(srv, &req, 0, kErrParse, "malformed request");
         re_arena_free(&req);
         return;
     }
     double id = 0.0;
     const re_jr_t *idv = re_jr_get(&root, "id");
-    // A request with no id is a notification and gets no reply, whatever it is. An
-    // unknown notification is not an error either: the sender is not waiting.
     bool is_notification = idv == nullptr;
     if (idv)
         id = (double)re_jr_i64(idv, 0);
     re_str_t method = re_jr_str(re_jr_get(&root, "method"), "");
     if (re_str_eq_cstr(method, "initialize"))
-        handle_initialize(&req, id);
+        handle_initialize(srv, &req, id);
     else if (re_str_eq_cstr(method, "tools/list"))
-        handle_tools_list(&req, id);
+        handle_tools_list(srv, &req, id);
     else if (re_str_eq_cstr(method, "session/open"))
         handle_session_open(srv, &req, id, params_of(&root));
     else if (re_str_eq_cstr(method, "session/list"))
-        handle_session_list(&req, id, *srv);
+        handle_session_list(srv, &req, id);
     else if (re_str_eq_cstr(method, "tools/call"))
         handle_tools_call(srv, &req, id, params_of(&root));
     else if (re_str_eq_cstr(method, "ping")) {
@@ -377,31 +321,27 @@ static void serve_frame(Server *srv, const char *line, size_t n) {
         re_strbuf_init(&empty, &req);
         re_strbuf_putc(&empty, '{');
         re_strbuf_putc(&empty, '}');
-        send_result(&req, id, &empty);
+        send_result(srv, &req, id, &empty);
     } else if (!is_notification) {
-        send_error(&req, id, kErrNoMethod, "method not implemented");
+        send_error(srv, &req, id, kErrNoMethod, "method not implemented");
     }
     re_arena_free(&req);
 }
 
-int re_mcp_main(void) {
-    // Mute logging outright. stdout carries protocol frames, so a stray write
-    // there looks like a protocol violation to the client.
-    re_log_set_mute(true);
+static int serve_loop(FILE *in, FILE *out) {
     Server srv;
     re_arena_init(&srv.arena, 256u * 1024u);
     srv.n_sessions = 0;
+    srv.out = out ? out : stdout;
     std::string line;
     line.reserve(4096);
     int c;
-    while ((c = std::fgetc(stdin)) != EOF) {
+    FILE *src = in ? in : stdin;
+    while ((c = std::fgetc(src)) != EOF) {
         if (c != '\n') {
             line.push_back((char)c);
             if (line.size() > (size_t)kFrameMax) {
-                // A frame this large is not a request we wrote or expect. Saying so and
-                // dropping the line keeps the stream in step, where growing without
-                // bound would take the process with it.
-                send_error(&srv.arena, 0, kErrInvalid, "frame too large");
+                send_error(&srv, &srv.arena, 0, kErrInvalid, "frame too large");
                 line.clear();
             }
             continue;
@@ -413,4 +353,21 @@ int re_mcp_main(void) {
     }
     re_arena_free(&srv.arena);
     return 0;
+}
+
+} // namespace
+
+const char *re_mcp_protocol_version(void) {
+    return kProtocolVersion;
+}
+
+int re_mcp_serve_files(FILE *in, FILE *out) {
+    return serve_loop(in, out);
+}
+
+int re_mcp_main(void) {
+    // Mute logging outright. stdout carries protocol frames, so a stray write
+    // there looks like a protocol violation to the client.
+    re_log_set_mute(true);
+    return serve_loop(stdin, stdout);
 }

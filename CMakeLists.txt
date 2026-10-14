@@ -153,11 +153,16 @@ src/cli/app/main.cpp
     src/cli/screen/re_gui_model.c
     src/cli/screen/re_gui.c
     src/cli/screen/re_gui_menu.c
+    src/cli/cmds/re_context_cmd.c
     src/mcp/re_mcp.cpp
-    src/mcp/re_mcp_tools.cpp)
+    src/mcp/re_mcp_tools.cpp
+    src/mcp/re_mcp_live.c
+    src/mcp/re_mcp_side.cpp)
 target_link_libraries(antistrefo PRIVATE re_core re_flags)
+find_package(Threads REQUIRED)
+target_link_libraries(antistrefo PRIVATE Threads::Threads)
 if(WIN32)
-    target_link_libraries(antistrefo PRIVATE comdlg32)
+    target_link_libraries(antistrefo PRIVATE comdlg32 ws2_32)
 endif()
 if(MSVC)
     set_property(TARGET antistrefo PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

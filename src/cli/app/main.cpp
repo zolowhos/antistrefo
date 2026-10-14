@@ -17,6 +17,7 @@
 #include "cli/cmds/re_cmds.h"
 #include "cli/screen/re_gui.h"
 #include "mcp/re_mcp.h"
+#include "mcp/re_mcp_side.h"
 
 namespace {
 
@@ -101,6 +102,13 @@ class Utf8Console {
 };
 
 } // namespace
+
+// Stdio MCP, or --attach to a GUI side-channel endpoint for agents.
+static int run_mcp(int argc, char **argv) {
+    if (argc >= 3 && re_str_eq_cstr(re_str(argv[2]), "--attach"))
+        return re_mcp_attach_main(argc >= 4 ? argv[3] : nullptr);
+    return re_mcp_main();
+}
 
 // Run one command from argv and return its exit code. Split out of main so main stays
 // about startup and dispatch order, which is what it is actually for.
@@ -193,6 +201,6 @@ int main(int argc, char **argv) {
         return 0;
     }
     if (re_str_eq_cstr(re_str(cmd->name), "mcp"))
-        return re_mcp_main();
+        return run_mcp(argc, argv);
     return run_one(cmd, argc, argv);
 }

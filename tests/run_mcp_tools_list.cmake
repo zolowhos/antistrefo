@@ -48,6 +48,18 @@ if(info_index LESS 0)
     message(FATAL_ERROR "tools/list did not include the info tool")
 endif()
 
+set(context_index -1)
+foreach(index RANGE 0 ${last_index})
+    string(JSON tool_name ERROR_VARIABLE json_error GET "${tools_frame}" result tools ${index} name)
+    if(tool_name STREQUAL "context")
+        set(context_index ${index})
+        break()
+    endif()
+endforeach()
+if(context_index LESS 0)
+    message(FATAL_ERROR "tools/list did not include the context tool")
+endif()
+
 string(JSON session_type ERROR_VARIABLE json_error GET
     "${tools_frame}" result tools ${info_index} inputSchema properties session type)
 if(NOT json_error STREQUAL "NOTFOUND" OR NOT session_type STREQUAL "string")

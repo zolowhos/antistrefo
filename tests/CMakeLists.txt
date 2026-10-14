@@ -130,6 +130,17 @@ add_test(NAME mcp_tools_list
         -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/mcp_tools_list.jsonl
         -P ${CMAKE_CURRENT_SOURCE_DIR}/run_mcp_tools_list.cmake)
 
+# GUI load console line and the live context snapshot MCP agents read.
+add_executable(re_test_mcp_live test_mcp_live.c
+    ${CMAKE_SOURCE_DIR}/src/mcp/re_mcp_live.c)
+target_link_libraries(re_test_mcp_live PRIVATE re_core re_utils re_flags)
+if(MSVC)
+    set_property(TARGET re_test_mcp_live
+        PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_definitions(re_test_mcp_live PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+add_test(NAME mcp_live COMMAND re_test_mcp_live)
+
 # The lowering suite is separate because a wrong IR shape still prints plausible
 # C, and only assertions on the ops themselves can tell a signed widening from
 # an unsigned one or a carried add from a dropped carry.

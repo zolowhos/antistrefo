@@ -15,11 +15,27 @@ extern "C" {
 #include "features/analysis/re_analyze.h"
 #include "features/data/re_vtable.h"
 #include "utils/mem/re_arena.h"
+#include "utils/text/re_strbuf.h"
+#include "cli/screen/re_pseudocode.h"
 
 // A pane's worth, not a promise about the file: a function can be longer than any pane
 // and a terminal has a fixed number of rows.
 #define RE_GUI_CODE_MAX 48u
 #define RE_GUI_LIST_MAX 256u
+
+// Cached decompiled body for the pseudo-code tab. Lives with the model so the
+// interactive loop stays under the file-size gate.
+typedef struct {
+    re_strbuf_t buf;
+    const char *line[RE_PSEUDO_MAX];
+    uint8_t mark[RE_PSEUDO_MAX];
+    size_t n;
+    size_t built_for;
+    bool started;
+    bool ok;
+} re_gui_pseudo_t;
+
+void re_gui_pseudo_fill(re_gui_pseudo_t *ps, re_arena_t *a, re_analysis_t *an, size_t sel);
 
 // The most rows the list can be asked for at once. The screen refuses a terminal taller
 // than RE_SCREEN_MAX_ROWS, so this is every pane there can be, and the view sizes the
