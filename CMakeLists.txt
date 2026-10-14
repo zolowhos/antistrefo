@@ -154,11 +154,15 @@ src/cli/app/main.cpp
     src/cli/screen/re_gui.c
     src/cli/screen/re_gui_menu.c
     src/cli/cmds/re_context_cmd.c
+    src/cli/cmds/re_ida_cmds.c
     src/mcp/re_mcp.cpp
     src/mcp/re_mcp_tools.cpp
     src/mcp/re_mcp_live.c
-    src/mcp/re_mcp_side.cpp)
+    src/mcp/re_mcp_side.cpp
+    src/mcp/re_mcp_db.c
+    src/mcp/re_mcp_exec.cpp)
 target_link_libraries(antistrefo PRIVATE re_core re_flags)
+target_compile_definitions(antistrefo PRIVATE RE_SCRIPTS_DIR="${CMAKE_SOURCE_DIR}/scripts")
 find_package(Threads REQUIRED)
 target_link_libraries(antistrefo PRIVATE Threads::Threads)
 if(WIN32)

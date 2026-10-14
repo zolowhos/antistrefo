@@ -47,6 +47,9 @@ typedef struct re_ctx {
     // requirement: without it the command builds its own. A command may only use it
     // when an->path matches the file it was asked about.
     struct re_analysis_s *session;
+    // When true, ida-mcp compatible tools omit schema antistrefo/1 and emit the
+    // upstream result object (or string) alone. Set by the MCP tool runner only.
+    bool ida_shape;
     re_err_t *err;
 } re_ctx_t;
 
@@ -64,6 +67,9 @@ typedef struct {
     // and the shell prompt. The MCP server refuses these before running anything,
     // because a protocol frame stream and a TUI cannot share the same pipe.
     bool interactive;
+    // When true, tools/list advertises this command. Legacy CLI-only analysis
+    // commands stay false so MCP matches the compact ida-mcp surface.
+    bool mcp;
 } re_cmd_t;
 
 const re_cmd_t *re_cmd_table(size_t *count);

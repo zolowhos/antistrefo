@@ -17,6 +17,8 @@
 #include "cli/cmds/re_cmds.h"
 #include "cli/screen/re_gui.h"
 #include "mcp/re_mcp.h"
+#include "mcp/re_mcp_db.h"
+#include "mcp/re_mcp_exec.h"
 #include "mcp/re_mcp_side.h"
 
 namespace {
@@ -146,45 +148,36 @@ int run_one(const re_cmd_t *cmd, int argc, char **argv) {
     return code;
 }
 
+static void init_mcp_paths(int argc, char **argv) {
+    if (argc > 0 && argv[0] && argv[0][0])
+        re_mcp_db_set_exe(argv[0]);
+#ifdef RE_SCRIPTS_DIR
+    re_mcp_exec_set_scripts(RE_SCRIPTS_DIR);
+#else
+    (void)argc;
+#endif
+}
+
 int main(int argc, char **argv) {
     re_log_init_from_env();
     re_crc_init();
-    // The stream mode depends on which mode of the tool this is, and only main knows.
-    // The MCP transport specifies one JSON object followed by a single \n and nothing
-    // else, so it needs binary. Everything else is being read by a person, and in
-    // binary mode a bare \n does not return the cursor to column 0 on Windows, so
-    // every line after the first would be staircased across the screen.
+    init_mcp_paths(argc, argv);
+    // MCP needs binary stdout; interactive modes need a UTF-8 console code page.
     bool mcp_mode = argc >= 2 && re_str_eq_cstr(re_str(argv[1]), "mcp");
     re_tui_set_stream_mode(mcp_mode);
-    // Only a person looking at the output gets the code page changed. The MCP
-    // transport is a byte stream and is not ours to re-encode.
     Utf8Console console(!mcp_mode);
 
     if (argc < 2) {
-        // No arguments means a person opened the binary, most likely by double clicking
-        // it or by typing its name. That gets the full screen view, which opens on its
-        // welcome screen and asks for a file, because that is the thing a person who
-        // has just started the tool wants to see.
-        //
-        // Anything else is something automated asking what this is, and it must get
-        // usage and an exit rather than a view it cannot drive.
         if (re_shell_wanted(argc))
             return re_cmd_gui(nullptr, "", 0, argv);
         print_usage();
         return re_err_exit_code(RE_E_USAGE);
     }
-
-    // Dropping a file onto this executable is how a Windows shell starts a program
-    // with a file: the dropped path arrives as the only argument. That is a person
-    // pointing at a binary and expecting it opened, so it goes straight to the full
-    // screen view. A name that is already a command never reaches this, because the
-    // lookup would have found it, so the two cannot be confused, and a name that is
-    // neither is still an unknown command.
+    // Drop-on-exe: the only argv is a path, so open it in the full screen view.
     if (!re_cmd_find(argv[1]) && argc == 2 && re_gui_wants_file(argv[1])) {
         char *dropped[] = {argv[0], const_cast<char *>("gui"), argv[1]};
         return re_cmd_gui(nullptr, dropped[2], 3, dropped);
     }
-
     const re_cmd_t *cmd = re_cmd_find(argv[1]);
     if (!cmd) {
         re_err_t err{};
