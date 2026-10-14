@@ -6,9 +6,47 @@
 #include "cli/screen/re_gui_model.h"
 
 #include "features/code/re_code.h"
+#include "features/code/re_stack.h"
+#include "features/dec/re_decompile.h"
 #include "utils/mem/re_buf.h"
 #include "utils/text/re_hex.h"
 #include "utils/text/re_strbuf.h"
+
+#include <string.h>
+
+void re_gui_pseudo_fill(re_gui_pseudo_t *ps, re_arena_t *a, re_analysis_t *an, size_t sel) {
+    if (!ps->started) {
+        re_strbuf_init(&ps->buf, a);
+        ps->started = true;
+        ps->built_for = (size_t)-1;
+    }
+    if (ps->built_for == sel)
+        return;
+    ps->built_for = sel;
+    re_strbuf_clear(&ps->buf);
+    ps->n = 0;
+    if (sel >= RE_VEC_LEN(&an->scan.funcs))
+        return;
+    const re_func_t *f = RE_VEC_PTR(&an->scan.funcs, re_func_t, sel);
+    re_decomp_t d;
+    re_stack_t st;
+    memset(&d, 0, sizeof(d));
+    d.jtables = NULL;
+    d.code = &an->code;
+    d.xrefs = &an->xs;
+    d.arena = a;
+    re_stack_analyze(d.code, f, a, &st);
+    ps->ok = re_decompile_ok(&d, f);
+    if (ps->ok)
+        re_decompile_func(&d, f, &st, &ps->buf);
+    re_strbuf_putc(&ps->buf, 0);
+    ps->n = re_pseudo_split(ps->buf.p, ps->line, ps->mark, RE_PSEUDO_MAX);
+    if (!ps->n) {
+        ps->line[0] = "/\x2f this body did not lower: no instruction was recovered from it";
+        ps->mark[0] = 1;
+        ps->n = 1;
+    }
+}
 
 void re_gui_funcs_fill(re_gui_funcs_t *l, re_arena_t *a, const re_analysis_t *an) {
     l->n = 0;

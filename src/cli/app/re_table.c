@@ -57,7 +57,10 @@ static const re_cmd_t kCommands[] = {
      false, false},
     {"hexdump", "raw bytes at a file offset or an rva",
      "hexdump <file> (--off N | --rva N) --len N", re_cmd_hexdump, true, false},
-    {"mcp", "run the MCP server over stdio", "mcp", NULL, false, false},
+    {"context", "live GUI session: open file, format, arch, selection, mcp endpoint", "context",
+     re_cmd_context, false, false},
+    {"mcp", "run the MCP server over stdio (or --attach to a gui side channel)", "mcp", NULL, false,
+     false},
     {"help", "list commands", "help", NULL, false, false},
     {"version", "print the version and schema", "version", NULL, false, false},
 };

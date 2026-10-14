@@ -1,14 +1,12 @@
 // re_gui.c - the interactive view over an analysed file.
 // Module: cli (C11).
 // Owns: the loop, the selection, and the mapping from keys to state.
-// Depends: re_gui.h, term, input, focus, draw, layout, console, analysis, code.
+// Depends: re_gui.h, term, input, focus, draw, layout, console, analysis, mcp live.
 #include "cli/screen/re_gui.h"
 
 #include "features/analysis/re_analyze.h"
 #include "features/code/re_code.h"
-#include "features/code/re_stack.h"
 #include "features/data/re_vtable.h"
-#include "features/dec/re_decompile.h"
 #include "utils/mem/re_buf.h"
 #include "utils/tui/re_console.h"
 #include "utils/tui/re_layout.h"
@@ -19,8 +17,9 @@
 #include "cli/screen/re_gui_menu.h"
 #include "cli/screen/re_gui_model.h"
 #include "cli/screen/re_input.h"
-#include "cli/screen/re_pseudocode.h"
 #include "cli/screen/re_term.h"
+#include "mcp/re_mcp_live.h"
+#include "mcp/re_mcp_side.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -39,20 +38,20 @@ typedef struct gui {
     re_term_t term;
     re_draw_t draw;
     re_focus_t focus;
-    size_t sel; // the selected function
-    size_t tab; // which page the right pane shows
+    size_t sel;
+    size_t tab;
     bool quit;
-    bool want_load;  // the load control was activated
-    bool loaded;     // a file is open, so the body is the file view
-    bool fana_ready; // the analysis arena holds a mapping
+    bool want_load;
+    bool loaded;
+    bool fana_ready;
     uint8_t button_zone;
-    uint8_t open_zone; // File, on the menu row
+    uint8_t open_zone;
     uint8_t tab_zone;
     uint8_t tabs_drawn;
     uint8_t row_zone;
     uint8_t rows_drawn;
     page_arg_t row_arg[RE_GUI_LIST_ROWS];
-    bool repaint; // the page changed, so the next frame is a full console clear
+    bool repaint;
     size_t page_off;
     size_t page_rows;
     size_t page_for;
@@ -76,54 +75,6 @@ typedef struct gui {
     uint32_t body_base;
 } gui_t;
 
-typedef struct {
-    re_strbuf_t buf;
-    const char *line[RE_PSEUDO_MAX];
-    uint8_t mark[RE_PSEUDO_MAX];
-    size_t n;
-    size_t built_for;
-    bool started;
-    bool ok;
-} pseudo_t;
-
-static void pseudo_split(pseudo_t *ps) {
-    re_strbuf_putc(&ps->buf, 0);
-    ps->n = re_pseudo_split(ps->buf.p, ps->line, ps->mark, RE_PSEUDO_MAX);
-}
-
-static void pseudo_fill(pseudo_t *ps, re_arena_t *a, re_analysis_t *an, size_t sel) {
-    if (!ps->started) {
-        re_strbuf_init(&ps->buf, a);
-        ps->started = true;
-        ps->built_for = (size_t)-1;
-    }
-    if (ps->built_for == sel)
-        return;
-    ps->built_for = sel;
-    re_strbuf_clear(&ps->buf);
-    ps->n = 0;
-    if (sel >= RE_VEC_LEN(&an->scan.funcs))
-        return;
-    const re_func_t *f = RE_VEC_PTR(&an->scan.funcs, re_func_t, sel);
-    re_decomp_t d;
-    memset(&d, 0, sizeof(d));
-    d.jtables = NULL;
-    d.code = &an->code;
-    d.xrefs = &an->xs;
-    d.arena = a;
-    re_stack_t st;
-    re_stack_analyze(d.code, f, a, &st);
-    ps->ok = re_decompile_ok(&d, f);
-    if (ps->ok)
-        re_decompile_func(&d, f, &st, &ps->buf);
-    pseudo_split(ps);
-    if (!ps->n) {
-        ps->line[0] = "/\x2f this body did not lower: no instruction was recovered from it";
-        ps->mark[0] = 1;
-        ps->n = 1;
-    }
-}
-
 static void show_lines(gui_t *g, const char **text, const uint8_t *marks, size_t n, size_t total) {
     if (total && g->page_off >= total)
         g->page_off = total - 1u;
@@ -141,7 +92,7 @@ static void page_scroll(gui_t *g, int down) {
         g->page_off--;
 }
 
-static void body_for(gui_t *g, re_arena_t *a, re_gui_listing_t *ls, pseudo_t *ps, size_t sel,
+static void body_for(gui_t *g, re_arena_t *a, re_gui_listing_t *ls, re_gui_pseudo_t *ps, size_t sel,
                      uint16_t rows) {
     const re_func_t *f = re_func_at(&g->an.scan, sel);
     const re_pe_t *pe = g->an.has_pe ? &g->an.pe : NULL;
@@ -154,7 +105,7 @@ static void body_for(gui_t *g, re_arena_t *a, re_gui_listing_t *ls, pseudo_t *ps
     }
     if (g->tab == 1) {
         size_t off;
-        pseudo_fill(ps, a, &g->an, sel);
+        re_gui_pseudo_fill(ps, a, &g->an, sel);
         off = g->page_off < ps->n ? g->page_off : (ps->n ? ps->n - 1u : 0u);
         g->page_off = off;
         show_lines(g, ps->n ? ps->line + off : NULL, ps->n ? ps->mark + off : NULL,
@@ -230,8 +181,10 @@ static void compose(re_screen_t *s, gui_t *g, const re_gui_funcs_t *l) {
     }
     re_focus_build(&g->focus, s);
 }
-static bool load_file(gui_t *g, re_arena_t *a, re_gui_funcs_t *list, pseudo_t *ps,
+
+static bool load_file(gui_t *g, re_arena_t *a, re_gui_funcs_t *list, re_gui_pseudo_t *ps,
                       const char *path) {
+    size_t n = 0;
     g->classes_ready = false;
     g->page_off = 0;
     if (g->fana_ready) {
@@ -240,10 +193,12 @@ static bool load_file(gui_t *g, re_arena_t *a, re_gui_funcs_t *list, pseudo_t *p
     }
     re_arena_free(&g->fana);
     re_arena_init(&g->fana, 1u << 23);
-    if (!re_analysis_open(&g->an, &g->fana, path))
+    if (!re_analysis_open(&g->an, &g->fana, path)) {
+        g->loaded = false;
+        re_mcp_live_clear_file();
         return false;
+    }
     g->fana_ready = true;
-    size_t n = 0;
     while (path[n] && n + 1u < sizeof(g->path)) {
         g->path[n] = path[n];
         n++;
@@ -255,6 +210,7 @@ static bool load_file(gui_t *g, re_arena_t *a, re_gui_funcs_t *list, pseudo_t *p
     ps->built_for = (size_t)-1;
     list->n = 0;
     re_gui_funcs_fill(list, a, &g->an);
+    re_mcp_live_note_load(&g->console, path, &g->an, g->sel);
     return true;
 }
 
@@ -387,9 +343,11 @@ static void feed_pointer(gui_t *g, re_screen_t *frame, const re_ev_t *ev) {
 }
 
 static bool turn(gui_t *g, re_arena_t *a, re_screen_t *frame, re_gui_funcs_t *list,
-                 re_gui_listing_t *ls, pseudo_t *ps) {
+                 re_gui_listing_t *ls, re_gui_pseudo_t *ps) {
     if (list->n && g->sel >= list->n)
         g->sel = list->n - 1u;
+    if (g->loaded)
+        re_mcp_live_note_sel(&g->an, g->sel, true);
     re_gui_funcs_fit(list, re_layout_body_rows(frame->rows));
     body_for(g, a, ls, ps, g->sel, frame->rows);
     compose(frame, g, list);
@@ -447,23 +405,24 @@ bool re_gui_wants_file(const char *arg) {
 }
 
 int re_cmd_gui(re_ctx_t *ctx, const char *path, int argc, char **argv) {
+    char ep[RE_MCP_LIVE_EP];
+    gui_t g;
+    re_arena_t arena;
+    re_gui_funcs_t list;
+    re_gui_listing_t ls;
+    re_gui_pseudo_t ps;
     (void)argc;
     (void)argv;
     (void)ctx;
-    gui_t g;
     memset(&g, 0, sizeof(g));
     re_ui_init(&g.ui);
     re_console_init(&g.console);
     g.menu_open = -1;
     g.syntax = true;
     g.color = true;
-    re_arena_t arena;
     re_arena_init(&arena, 1u << 23);
-    re_gui_funcs_t list;
     memset(&list, 0, sizeof(list));
-    re_gui_listing_t ls;
     memset(&ls, 0, sizeof(ls));
-    pseudo_t ps;
     memset(&ps, 0, sizeof(ps));
 
     if (!re_term_open(&g.term, true)) {
@@ -471,6 +430,8 @@ int re_cmd_gui(re_ctx_t *ctx, const char *path, int argc, char **argv) {
         re_arena_free(&arena);
         return 2;
     }
+    if (re_mcp_side_start(ep, sizeof(ep)))
+        re_mcp_live_note_mcp(&g.console, ep, true);
     bool ready = !*path || load_file(&g, &arena, &list, &ps, path);
     uint16_t rows = 24, cols = 80;
     re_term_size(&rows, &cols);
@@ -490,6 +451,8 @@ int re_cmd_gui(re_ctx_t *ctx, const char *path, int argc, char **argv) {
         }
     }
     re_term_close(&g.term);
+    re_mcp_side_stop();
+    re_mcp_live_clear_file();
     if (g.fana_ready)
         re_analysis_close(&g.an);
     re_arena_free(&arena);
