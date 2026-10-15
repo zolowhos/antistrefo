@@ -36,7 +36,22 @@ set(required_tools
     list_databases
     save_database
     close_database
-    context)
+    context
+    rename
+    list_names
+    check_connection
+    get_metadata
+    list_functions
+    decompile_function
+    disassemble_function
+    get_xrefs_to
+    rename_function
+    read_memory_bytes
+    get_stack_frame_variables
+    list_local_types
+    set_comment
+    patch_address_assembles
+    get_xrefs_to_field)
 foreach(want IN LISTS required_tools)
     set(found 0)
     math(EXPR last_index "${tool_count} - 1")
@@ -52,6 +67,11 @@ foreach(want IN LISTS required_tools)
         message(FATAL_ERROR "tools/list missing ${want}")
     endif()
 endforeach()
+
+# Discrete surface must expose the full Tier A+B set (plus session tools).
+if(tool_count LESS 50)
+    message(FATAL_ERROR "expected at least 50 MCP tools, got ${tool_count}")
+endif()
 
 # Legacy CLI tools must not appear on the MCP surface.
 foreach(legacy IN ITEMS info funcs disasm session_open session_list)

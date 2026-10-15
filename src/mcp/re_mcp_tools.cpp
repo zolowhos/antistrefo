@@ -36,6 +36,11 @@ const ToolSpec kToolArgs[] = {
       {"name", NULL, "new display name written to the .alt sidecar", false},
       kEnd,
       kEnd}},
+    {"rename_function",
+     {{"address", NULL, "function RVA, VA, or current name to rename", false},
+      {"new_name", NULL, "new display name written to the .alt sidecar", false},
+      kEnd,
+      kEnd}},
     {"execute_query",
      {{"op", NULL, "analysis op: funcs disasm decompile xrefs strings ...", false},
       {"addr", NULL, "address or search pattern for the op", false},
@@ -46,6 +51,35 @@ const ToolSpec kToolArgs[] = {
      {{"instance_id", NULL, "optional database instance id", false}, kEnd, kEnd, kEnd}},
     {"save_database",
      {{"instance_id", NULL, "optional database instance id", false}, kEnd, kEnd, kEnd}},
+    {"get_function_by_name", {{"name", NULL, "function display name", false}, kEnd, kEnd, kEnd}},
+    {"get_function_by_address",
+     {{"address", NULL, "VA or RVA inside the function", false}, kEnd, kEnd, kEnd}},
+    {"convert_number",
+     {{"text", NULL, "number as decimal, 0x hex, or 0b binary", false}, kEnd, kEnd, kEnd}},
+    {"decompile_function", {{"address", NULL, "function VA or RVA", false}, kEnd, kEnd, kEnd}},
+    {"disassemble_function", {{"address", NULL, "function VA or RVA", false}, kEnd, kEnd, kEnd}},
+    {"get_xrefs_to", {{"address", NULL, "target VA or RVA", false}, kEnd, kEnd, kEnd}},
+    {"get_callees", {{"address", NULL, "function VA or RVA", false}, kEnd, kEnd, kEnd}},
+    {"get_callers", {{"address", NULL, "function VA or RVA", false}, kEnd, kEnd, kEnd}},
+    {"get_stack_frame_variables",
+     {{"address", NULL, "function VA or RVA", false}, kEnd, kEnd, kEnd}},
+    {"read_memory_bytes",
+     {{"address", NULL, "VA or RVA to read", false},
+      {"size", NULL, "byte count", false},
+      kEnd,
+      kEnd}},
+    {"data_read_byte", {{"address", NULL, "VA or RVA", false}, kEnd, kEnd, kEnd}},
+    {"data_read_word", {{"address", NULL, "VA or RVA", false}, kEnd, kEnd, kEnd}},
+    {"data_read_dword", {{"address", NULL, "VA or RVA", false}, kEnd, kEnd, kEnd}},
+    {"data_read_qword", {{"address", NULL, "VA or RVA", false}, kEnd, kEnd, kEnd}},
+    {"data_read_string", {{"address", NULL, "VA or RVA", false}, kEnd, kEnd, kEnd}},
+    {"get_global_variable_value_by_name", {{"name", NULL, "export name", false}, kEnd, kEnd, kEnd}},
+    {"get_global_variable_value_at_address",
+     {{"address", NULL, "VA or RVA", false}, kEnd, kEnd, kEnd}},
+    {"list_strings_filter",
+     {{"filter", "--regex", "regex filter for strings", false}, kEnd, kEnd, kEnd}},
+    {"list_globals_filter",
+     {{"filter", "--regex", "regex filter for exports", false}, kEnd, kEnd, kEnd}},
 };
 
 const ToolSpec *spec_for(const char *cmd) {
@@ -79,12 +113,10 @@ void tool_error(re_strbuf_t *out, const char *code, const char *msg, bool *is_er
 }
 
 bool is_ida_tool(const char *name) {
-    return re_str_eq_cstr(re_str(name), "open_database") ||
-           re_str_eq_cstr(re_str(name), "list_databases") ||
-           re_str_eq_cstr(re_str(name), "close_database") ||
-           re_str_eq_cstr(re_str(name), "save_database") ||
-           re_str_eq_cstr(re_str(name), "execute_query") ||
-           re_str_eq_cstr(re_str(name), "reference");
+    // Discrete ida-pro-mcp tools and the HexRays lifecycle set use ida envelopes.
+    // Keep antistrefo-native rename / list_names / context on the schema path.
+    return !re_str_eq_cstr(re_str(name), "rename") && !re_str_eq_cstr(re_str(name), "list_names") &&
+           !re_str_eq_cstr(re_str(name), "context");
 }
 
 // Fixed ida-mcp input schemas for the six tools (plus generic path for open).
@@ -295,10 +327,47 @@ static int append_query_flags(const re_jr_t *args, re_arena_t *a, char **argv, i
     return argc;
 }
 
+int append_positionals(const ToolSpec *spec, const re_jr_t *args, re_arena_t *a, char **argv,
+                       int argc) {
+    if (!spec)
+        return argc;
+    for (const ArgSpec &s : spec->args) {
+        if (!s.json)
+            break;
+        if (s.flag)
+            continue;
+        re_str_t v = re_jr_str(re_jr_get(args, s.json), "");
+        if (v.n)
+            argv[argc++] = re_arena_strndup(a, v.p, v.n);
+    }
+    return argc;
+}
+
+int append_flagged(const ToolSpec *spec, const re_jr_t *args, re_arena_t *a, char **argv, int argc,
+                   char (*tok)[24], int *ntok) {
+    if (!spec)
+        return argc;
+    for (const ArgSpec &s : spec->args) {
+        if (!s.json)
+            break;
+        if (!s.flag || !re_jr_has(args, s.json))
+            continue;
+        argv[argc++] = const_cast<char *>(s.flag);
+        if (s.is_num)
+            argv[argc++] = num_tok(tok, ntok, re_jr_i64(re_jr_get(args, s.json), 0));
+        else {
+            re_str_t v = re_jr_str(re_jr_get(args, s.json), "");
+            argv[argc++] = v.n ? re_arena_strndup(a, v.p, v.n) : const_cast<char *>("");
+        }
+    }
+    return argc;
+}
+
 int build_argv(const re_cmd_t *cmd, const char *path, const re_jr_t *args, re_arena_t *a,
                char **argv, char (*tok)[24]) {
     int argc = build_argv_ida(cmd, args, a, argv);
     int ntok = 0;
+    const ToolSpec *spec;
     if (argc >= 0) {
         if (re_str_eq_cstr(re_str(cmd->name), "execute_query") && args)
             argc = append_query_flags(args, a, argv, argc, tok, &ntok);
@@ -307,38 +376,34 @@ int build_argv(const re_cmd_t *cmd, const char *path, const re_jr_t *args, re_ar
     argc = 0;
     if (cmd->needs_path)
         argv[argc++] = const_cast<char *>(path);
-    const ToolSpec *spec = spec_for(cmd->name);
-    if (spec && spec->args[0].json && !spec->args[0].flag) {
-        re_str_t v = re_jr_str(re_jr_get(args, spec->args[0].json), "");
-        if (v.n)
-            argv[argc++] = re_arena_strndup(a, v.p, v.n);
-    }
-    int64_t limit = re_jr_i64(re_jr_get(args, "limit"), -1);
-    if (limit > 0) {
-        argv[argc++] = const_cast<char *>("--limit");
-        argv[argc++] = num_tok(tok, &ntok, limit);
-    }
-    int64_t offset = re_jr_i64(re_jr_get(args, "offset"), -1);
-    if (offset >= 0) {
-        argv[argc++] = const_cast<char *>("--offset");
-        argv[argc++] = num_tok(tok, &ntok, offset);
-    }
-    if (spec) {
-        for (const ArgSpec &s : spec->args) {
-            if (!s.json)
-                break;
-            if (!s.flag || !re_jr_has(args, s.json))
-                continue;
-            argv[argc++] = const_cast<char *>(s.flag);
-            if (s.is_num) {
-                argv[argc++] = num_tok(tok, &ntok, re_jr_i64(re_jr_get(args, s.json), 0));
-            } else {
-                re_str_t v = re_jr_str(re_jr_get(args, s.json), "");
-                argv[argc++] = v.n ? re_arena_strndup(a, v.p, v.n) : const_cast<char *>("");
-            }
+    spec = spec_for(cmd->name);
+    argc = append_positionals(spec, args, a, argv, argc);
+    {
+        int64_t limit = re_jr_i64(re_jr_get(args, "limit"), -1);
+        if (limit > 0) {
+            argv[argc++] = const_cast<char *>("--limit");
+            argv[argc++] = num_tok(tok, &ntok, limit);
+        }
+        int64_t offset = re_jr_i64(re_jr_get(args, "offset"), -1);
+        if (offset >= 0) {
+            argv[argc++] = const_cast<char *>("--offset");
+            argv[argc++] = num_tok(tok, &ntok, offset);
         }
     }
-    return argc;
+    return append_flagged(spec, args, a, argv, argc, tok, &ntok);
+}
+
+void finish_capture(re_ctx_t *ctx, const re_cmd_t *cmd, const char *path, char **argv, int argc,
+                    re_strbuf_t *out, bool *is_error, re_err_t *err) {
+    int rc = 0;
+    if (!run_captured(ctx, cmd, path, argv, argc, out, &rc)) {
+        if (err->code != RE_OK)
+            tool_error(out, re_err_str(err->code), re_err_msg(err), is_error);
+        else
+            tool_error(out, "no_response", "the command produced no response", is_error);
+        return;
+    }
+    *is_error = rc != 0;
 }
 
 void mcp_run_tool(const re_cmd_t *cmd, const char *path, const re_jr_t *args, re_arena_t *a,
@@ -349,7 +414,7 @@ void mcp_run_tool(const re_cmd_t *cmd, const char *path, const re_jr_t *args, re
     re_ctx_t ctx;
     re_err_t err;
     re_arena_t work;
-    int rc = 0;
+    int first = 0;
     std::memset(&ctx, 0, sizeof(ctx));
     re_arena_init(&work, 0);
     ctx.arena = &work;
@@ -357,44 +422,26 @@ void mcp_run_tool(const re_cmd_t *cmd, const char *path, const re_jr_t *args, re
     ctx.out = RE_FMT_OUT_JSON;
     ctx.ida_shape = is_ida_tool(cmd->name);
     err.code = RE_OK;
-    if (ctx.ida_shape) {
-        if (cmd->needs_path && (!path || !path[0])) {
-            tool_error(out, "usage", "no file: give path, or open one in the gui", is_error);
-            re_arena_free(&work);
-            return;
-        }
-        if (!run_captured(&ctx, cmd, path, argv, argc, out, &rc)) {
-            if (err.code != RE_OK)
-                tool_error(out, re_err_str(err.code), re_err_msg(&err), is_error);
-            else
-                tool_error(out, "no_response", "the command produced no response", is_error);
-            re_arena_free(&work);
-            return;
-        }
-        *is_error = rc != 0;
+    if (cmd->needs_path && (!path || !path[0])) {
+        tool_error(out, "usage", "no file: give path, open_database, or gui", is_error);
         re_arena_free(&work);
         return;
     }
-    int first = 0;
     if (!re_cmd_parse(&ctx, argc, argv, &first, &err)) {
         tool_error(out, re_err_str(err.code), re_err_msg(&err), is_error);
         re_arena_free(&work);
         return;
     }
-    const char *file = cmd->needs_path ? (first < argc ? argv[first] : path) : NULL;
-    if (cmd->needs_path && !file) {
-        tool_error(out, "usage", "no file: give path, or open_database / gui", is_error);
-        re_arena_free(&work);
-        return;
+    if (ctx.ida_shape) {
+        finish_capture(&ctx, cmd, path, argv, argc, out, is_error, &err);
+    } else {
+        const char *file = cmd->needs_path ? (first < argc ? argv[first] : path) : NULL;
+        if (cmd->needs_path && !file) {
+            tool_error(out, "usage", "no file: give path, or open_database / gui", is_error);
+            re_arena_free(&work);
+            return;
+        }
+        finish_capture(&ctx, cmd, file, argv + first, argc - first, out, is_error, &err);
     }
-    if (!run_captured(&ctx, cmd, file, argv + first, argc - first, out, &rc)) {
-        if (err.code != RE_OK)
-            tool_error(out, re_err_str(err.code), re_err_msg(&err), is_error);
-        else
-            tool_error(out, "no_response", "the command produced no response", is_error);
-        re_arena_free(&work);
-        return;
-    }
-    *is_error = rc != 0;
     re_arena_free(&work);
 }
