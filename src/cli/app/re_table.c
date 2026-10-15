@@ -29,7 +29,7 @@ static const re_cmd_t kCommands[] = {
     {"exports", "exported symbols, demangled when possible", "exports <file>", re_cmd_exports, true,
      false, false},
     {"strings", "printable strings, ascii and utf-16, with a regex filter",
-     "strings <file> [--regex R]", re_cmd_strings, true, false, false},
+     "strings <file> [--regex R] [--context N]", re_cmd_strings, true, false, false},
     {"vtables", "C++ class tables, named from the image's own RTTI where it has any",
      "vtables <file>", re_cmd_vtables, true, false, false},
     {"search", "find text, an immediate value, or a hex pattern with wildcards",
@@ -46,6 +46,8 @@ static const re_cmd_t kCommands[] = {
      re_cmd_list_names, true, false, true},
     {"xrefs", "cross references, with imports, exports and strings named", "xrefs <file> [addr]",
      re_cmd_xrefs, true, false, false},
+    {"namerefs", "RIP-relative loads of an exact name list, in order",
+     "namerefs <file> --exports <pe>|--names <f>", re_cmd_namerefs, true, false, false},
     {"jtables", "jump tables behind an indirect branch, with case targets", "jtables <file>",
      re_cmd_jtables, true, false, false},
     {"disasm", "disassemble a function or an address range", "disasm <file> [addr] [--len N]",
@@ -117,8 +119,56 @@ static bool parse_u64(const char *s, uint64_t *out) {
     *out = acc;
     return true;
 }
-// Apply one shared flag to the context. Returns 0 when the flag was not ours.
+// Path flags used by namerefs. Returns false when the flag is not one of them.
+static bool apply_path(re_ctx_t *ctx, re_str_t a, const char *val) {
+    if (re_str_starts_cstr(a, "--exports"))
+        ctx->exports_path = re_str(val);
+    else if (re_str_starts_cstr(a, "--names"))
+        ctx->names_path = re_str(val);
+    else if (re_str_starts_cstr(a, "--order"))
+        ctx->order_path = re_str(val);
+    else
+        return false;
+    return true;
+}
+
+static bool takes_value(re_str_t a) {
+    return re_str_eq_cstr(a, "--format") || re_str_eq_cstr(a, "--regex") ||
+           re_str_eq_cstr(a, "--limit") || re_str_eq_cstr(a, "--offset") ||
+           re_str_eq_cstr(a, "--context") || re_str_eq_cstr(a, "--off") ||
+           re_str_eq_cstr(a, "--rva") || re_str_eq_cstr(a, "--len") ||
+           re_str_eq_cstr(a, "--exports") || re_str_eq_cstr(a, "--names") ||
+           re_str_eq_cstr(a, "--order");
+}
+
+static const char *glued_value(re_str_t a) {
+    if (re_str_starts_cstr(a, "--format="))
+        return a.p + 9;
+    if (re_str_starts_cstr(a, "--regex="))
+        return a.p + 8;
+    if (re_str_starts_cstr(a, "--len="))
+        return a.p + 6;
+    if (re_str_starts_cstr(a, "--off="))
+        return a.p + 6;
+    if (re_str_starts_cstr(a, "--limit="))
+        return a.p + 8;
+    if (re_str_starts_cstr(a, "--offset="))
+        return a.p + 9;
+    if (re_str_starts_cstr(a, "--context="))
+        return a.p + 10;
+    if (re_str_starts_cstr(a, "--exports="))
+        return a.p + 10;
+    if (re_str_starts_cstr(a, "--names="))
+        return a.p + 8;
+    if (re_str_starts_cstr(a, "--order="))
+        return a.p + 8;
+    return NULL;
+}
+
+// Apply one shared flag to the context. Returns false when the flag was not ours.
 static bool apply_flag(re_ctx_t *ctx, re_str_t a, const char *val, re_err_t *err) {
+    if (apply_path(ctx, a, val))
+        return true;
     if (re_str_starts_cstr(a, "--format")) {
         re_str_t v = re_str(val);
         if (re_str_eq_cstr(v, "text"))
@@ -138,12 +188,13 @@ static bool apply_flag(re_ctx_t *ctx, re_str_t a, const char *val, re_err_t *err
     }
     bool is_off = re_str_starts_cstr(a, "--off");
     bool is_len = re_str_starts_cstr(a, "--len");
+    bool is_context = re_str_starts_cstr(a, "--context");
     // --rva lands in the same field as --off because only the hexdump command
     // distinguishes them, and it does so by looking at argv. Both are a start
     // address; which one it is depends on the command, not on the parser.
     bool is_rva = re_str_starts_cstr(a, "--rva");
     if (!re_str_starts_cstr(a, "--limit") && !re_str_starts_cstr(a, "--offset") && !is_off &&
-        !is_len && !is_rva)
+        !is_len && !is_rva && !is_context)
         return false;
     uint64_t n = 0;
     if (!parse_u64(val, &n)) {
@@ -154,6 +205,8 @@ static bool apply_flag(re_ctx_t *ctx, re_str_t a, const char *val, re_err_t *err
         ctx->limit = (size_t)n;
     else if (re_str_starts_cstr(a, "--offset"))
         ctx->offset = (size_t)n;
+    else if (is_context)
+        ctx->context = (size_t)n;
     else if (is_len)
         ctx->len = n;
     else
@@ -165,51 +218,39 @@ bool re_cmd_parse(re_ctx_t *ctx, int argc, char **argv, int *first_positional, r
     ctx->out = RE_FMT_OUT_JSON;
     ctx->limit = 200;
     ctx->offset = 0;
+    ctx->context = 0;
     ctx->off = 0;
     ctx->len = 256;
     ctx->has_regex = false;
     ctx->no_color = false;
+    ctx->exports_path = re_str(NULL);
+    ctx->names_path = re_str(NULL);
+    ctx->order_path = re_str(NULL);
     int pos = argc;
     for (int i = 0; i < argc; i++) {
         re_str_t a = re_str(argv[i]);
+        const char *val;
         if (!re_str_starts_cstr(a, "--")) {
             if (pos == argc)
                 pos = i;
             continue;
         }
         // Prefer the --flag=value form so a value never looks like a flag.
-        const char *val = NULL;
-        if (re_str_starts_cstr(a, "--format="))
-            val = argv[i] + 9;
-        else if (re_str_starts_cstr(a, "--regex="))
-            val = argv[i] + 8;
-        else if (re_str_starts_cstr(a, "--len="))
-            val = argv[i] + 6;
-        else if (re_str_starts_cstr(a, "--off="))
-            val = argv[i] + 6;
-        else if (re_str_starts_cstr(a, "--limit="))
-            val = argv[i] + 8;
-        else if (re_str_starts_cstr(a, "--offset="))
-            val = argv[i] + 9;
-        else if (re_str_eq_cstr(a, "--format") || re_str_eq_cstr(a, "--regex") ||
-                 re_str_eq_cstr(a, "--limit") || re_str_eq_cstr(a, "--offset") ||
-                 re_str_eq_cstr(a, "--off") || re_str_eq_cstr(a, "--rva") ||
-                 re_str_eq_cstr(a, "--len")) {
+        val = glued_value(a);
+        if (!val && takes_value(a)) {
             if (i + 1 >= argc) {
                 RE_ERR_SETF(err, RE_E_USAGE, "flag %s needs a value", argv[i]);
                 return false;
             }
             val = argv[++i];
-        } else if (re_str_eq_cstr(a, "--no-color")) {
-            // The one flag with no value, because a flag that can be spelled two ways
-            // for the same thing is a flag someone will get wrong.
+        } else if (!val && re_str_eq_cstr(a, "--no-color")) {
             ctx->no_color = true;
             continue;
-        } else {
+        } else if (!val) {
             RE_ERR_SETF(err, RE_E_USAGE, "unknown flag %s", argv[i]);
             return false;
         }
-        if (val && !apply_flag(ctx, a, val, err))
+        if (!apply_flag(ctx, a, val, err))
             return false;
     }
     *first_positional = pos;

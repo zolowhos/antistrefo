@@ -117,7 +117,15 @@ bool schema_ida(const char *name, re_strbuf_t *b) {
                        "\"regex\":{\"type\":\"string\"},"
                        "\"instance_id\":{\"description\":\"Optional database instance id.\"},"
                        "\"limit\":{\"type\":\"integer\"},"
-                       "\"offset\":{\"type\":\"integer\"}"
+                       "\"offset\":{\"type\":\"integer\"},"
+                       "\"context\":{\"type\":\"integer\",\"description\":"
+                       "\"Neighbor strings to include on each side of a hit.\"},"
+                       "\"exports\":{\"type\":\"string\",\"description\":"
+                       "\"Provider PE whose export names namerefs resolves.\"},"
+                       "\"names\":{\"type\":\"string\",\"description\":"
+                       "\"Text file of names, one per line.\"},"
+                       "\"order\":{\"type\":\"string\",\"description\":"
+                       "\"Canonical name list used to name holes.\"}"
                        "},\"required\":[\"op\"]}");
         return true;
     }
@@ -258,6 +266,32 @@ static int append_query_flags(const re_jr_t *args, re_arena_t *a, char **argv, i
         argv[argc++] = const_cast<char *>("--offset");
         argv[argc++] = num_tok(tok, ntok, offset);
     }
+    int64_t context = re_jr_i64(re_jr_get(args, "context"), -1);
+    if (context > 0) {
+        argv[argc++] = const_cast<char *>("--context");
+        argv[argc++] = num_tok(tok, ntok, context);
+    }
+    if (re_jr_has(args, "exports")) {
+        re_str_t v = re_jr_str(re_jr_get(args, "exports"), "");
+        if (v.n) {
+            argv[argc++] = const_cast<char *>("--exports");
+            argv[argc++] = re_arena_strndup(a, v.p, v.n);
+        }
+    }
+    if (re_jr_has(args, "names")) {
+        re_str_t v = re_jr_str(re_jr_get(args, "names"), "");
+        if (v.n) {
+            argv[argc++] = const_cast<char *>("--names");
+            argv[argc++] = re_arena_strndup(a, v.p, v.n);
+        }
+    }
+    if (re_jr_has(args, "order")) {
+        re_str_t v = re_jr_str(re_jr_get(args, "order"), "");
+        if (v.n) {
+            argv[argc++] = const_cast<char *>("--order");
+            argv[argc++] = re_arena_strndup(a, v.p, v.n);
+        }
+    }
     return argc;
 }
 
@@ -310,7 +344,7 @@ int build_argv(const re_cmd_t *cmd, const char *path, const re_jr_t *args, re_ar
 void mcp_run_tool(const re_cmd_t *cmd, const char *path, const re_jr_t *args, re_arena_t *a,
                   re_strbuf_t *out, bool *is_error) {
     char tok[8][24];
-    char *argv[16];
+    char *argv[24];
     int argc = build_argv(cmd, path, args, a, argv, tok);
     re_ctx_t ctx;
     re_err_t err;

@@ -61,17 +61,32 @@ static bool run_immediate(re_ctx_t *ctx, re_span_t img, re_str_t pat, re_search_
     return true;
 }
 
-static void emit_hits(re_ctx_t *ctx, re_span_t img, re_format_t fmt, re_search_t *s) {
+static void emit_text_extra(re_jw_t *w, re_ctx_t *ctx, re_span_t img, const re_search_hit_t *h) {
+    re_str_around_t ar;
+    re_str_around(img, h->off, h->wide, 4, ctx->context, ctx->arena, &ar);
+    if (ar.found)
+        re_jw_kstr(w, "run", ar.run.text);
+    re_jw_kbool(w, "wide", h->wide);
+    if (!ctx->context)
+        return;
+    re_str_hits_json(w, "before", &ar.before);
+    re_str_hits_json(w, "after", &ar.after);
+}
+
+static void emit_hits(re_ctx_t *ctx, re_span_t img, re_format_t fmt, re_search_t *s, bool as_text) {
     re_jw_t w;
+    size_t i;
     re_jw_init(&w, ctx->arena);
     envelope(&w, "search", img, fmt);
     re_jw_key(&w, "hits");
     re_jw_arr(&w);
-    for (size_t i = 0; i < RE_VEC_LEN(&s->hits); i++) {
+    for (i = 0; i < RE_VEC_LEN(&s->hits); i++) {
         const re_search_hit_t *h = RE_VEC_PTR(&s->hits, re_search_hit_t, i);
         re_jw_obj(&w);
         re_jw_khex(&w, "off", h->off, 8);
         re_jw_kstr(&w, "text", h->text);
+        if (as_text)
+            emit_text_extra(&w, ctx, img, h);
         re_jw_obj_end(&w);
     }
     re_jw_arr_end(&w);
@@ -129,7 +144,7 @@ int re_cmd_search(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     } else {
         re_search_signature(img, pat, ctx->offset, ctx->limit, ctx->arena, &s);
     }
-    emit_hits(ctx, img, fmt, &s);
+    emit_hits(ctx, img, fmt, &s, kind == RE_SEARCH_TEXT || kind == RE_SEARCH_SIGNATURE);
     re_file_close(&f);
     return 0;
 }

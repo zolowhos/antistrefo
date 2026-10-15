@@ -19,12 +19,16 @@ static char kFlagRva[] = "--rva";
 static char kFlagRegex[] = "--regex";
 static char kFlagLimit[] = "--limit";
 static char kFlagOffset[] = "--offset";
+static char kFlagContext[] = "--context";
+static char kFlagExports[] = "--exports";
+static char kFlagNames[] = "--names";
+static char kFlagOrder[] = "--order";
 
 static bool op_allowed(const char *op) {
-    static const char *kOps[] = {"info",    "triage", "sections", "imports", "exports",
-                                 "strings", "funcs",  "xrefs",    "disasm",  "decompile",
-                                 "cfg",     "search", "hexdump",  "regions", "jtables",
-                                 "entropy", "rules",  "vtables",  "analyze", "demangle"};
+    static const char *kOps[] = {
+        "info",    "triage",   "sections", "imports",   "exports", "strings", "funcs",
+        "xrefs",   "namerefs", "disasm",   "decompile", "cfg",     "search",  "hexdump",
+        "regions", "jtables",  "entropy",  "rules",     "vtables", "analyze", "demangle"};
     for (size_t i = 0; i < sizeof(kOps) / sizeof(kOps[0]); i++) {
         if (re_str_eq_cstr(re_str(op), kOps[i]))
             return true;
@@ -45,6 +49,14 @@ static int push_u64(char **argv, int argc, char (*tok)[24], int *ntok, char *fla
     snprintf(t, 24, "%llu", (unsigned long long)v);
     argv[argc++] = flag;
     argv[argc++] = t;
+    return argc;
+}
+
+static int push_opt(char **argv, int argc, re_arena_t *a, char *flag, const char *val) {
+    if (!val || !val[0])
+        return argc;
+    argv[argc++] = flag;
+    argv[argc++] = re_arena_strdup(a, val);
     return argc;
 }
 
@@ -80,10 +92,11 @@ static bool capture_cmd(const re_cmd_t *cmd, const char *path, char **argv, int 
 
 bool re_mcp_query_run(re_arena_t *a, const char *db_path, const char *op, const char *arg,
                       uint64_t len, uint64_t off, uint64_t rva, bool has_len, bool has_off,
-                      bool has_rva, const char *regex, size_t limit, size_t offset,
-                      re_strbuf_t *out, re_err_t *err) {
+                      bool has_rva, const char *regex, size_t limit, size_t offset, size_t context,
+                      const char *exports, const char *names, const char *order, re_strbuf_t *out,
+                      re_err_t *err) {
     const re_cmd_t *cmd;
-    char *argv[16];
+    char *argv[24];
     char tok[8][24];
     int argc = 0;
     int ntok = 0;
@@ -121,6 +134,11 @@ bool re_mcp_query_run(re_arena_t *a, const char *db_path, const char *op, const 
         argc = push_u64(argv, argc, tok, &ntok, kFlagLimit, (uint64_t)limit);
     if (offset)
         argc = push_u64(argv, argc, tok, &ntok, kFlagOffset, (uint64_t)offset);
+    if (context)
+        argc = push_u64(argv, argc, tok, &ntok, kFlagContext, (uint64_t)context);
+    argc = push_opt(argv, argc, a, kFlagExports, exports);
+    argc = push_opt(argv, argc, a, kFlagNames, names);
+    argc = push_opt(argv, argc, a, kFlagOrder, order);
     if (!capture_cmd(cmd, cmd->needs_path ? db_path : NULL, argv, argc, a, out, err)) {
         if (err->code == RE_OK)
             err_json(out, "no_response", "query produced no response");
@@ -134,17 +152,25 @@ bool re_mcp_query_run(re_arena_t *a, const char *db_path, const char *op, const 
 const char *re_mcp_query_reference(const char *query) {
     static const char kDefault[] =
         "execute_query ops (native, no Python):\n"
-        "  info triage sections imports exports strings funcs xrefs\n"
+        "  info triage sections imports exports strings funcs xrefs namerefs\n"
         "  disasm decompile cfg search hexdump regions jtables\n"
         "  entropy rules vtables analyze demangle\n"
-        "Args: op, optional addr/pattern, len, off, rva, regex, limit, offset.\n"
+        "Args: op, optional addr/pattern, len, off, rva, regex, limit, offset, context,\n"
+        "  exports, names, order.\n"
         "Example: op=decompile addr=0x180001000\n"
-        "Example: op=strings regex=http\n"
+        "Example: op=strings regex=http context=4\n"
         "open_database first. save_database is unsupported.\n";
     static const char kDecomp[] = "Decompile: execute_query op=decompile addr=<ea>\n"
                                   "Returns Tier B C-like source in result.source.\n";
     static const char kXref[] = "Xrefs: execute_query op=xrefs addr=<ea>\n";
-    static const char kStr[] = "Strings: execute_query op=strings [regex=<filter>]\n";
+    static const char kStr[] =
+        "Strings: execute_query op=strings [regex=<filter>] [context=N]\n"
+        "context adds that many neighboring strings on each side of a hit.\n";
+    static const char kSearch[] = "Search: execute_query op=search addr=text:<pat> [context=N]\n"
+                                  "Text hits include run, the full string around the match.\n";
+    static const char kName[] = "Namerefs: execute_query op=namerefs exports=<provider>\n"
+                                "  or names=<file> [order=<file>]\n"
+                                "RIP-relative loads of those exact names, in instruction order.\n";
     if (!query || !query[0])
         return kDefault;
     {
@@ -155,6 +181,10 @@ const char *re_mcp_query_reference(const char *query) {
             return kXref;
         if (re_str_find_cstr(q, "string", 0) >= 0)
             return kStr;
+        if (re_str_find_cstr(q, "search", 0) >= 0)
+            return kSearch;
+        if (re_str_find_cstr(q, "nameref", 0) >= 0)
+            return kName;
     }
     return kDefault;
 }

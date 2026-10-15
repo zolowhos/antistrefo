@@ -19,8 +19,9 @@ extern "C" {
 // On failure out may hold an error object and err is set.
 bool re_mcp_query_run(re_arena_t *a, const char *db_path, const char *op, const char *arg,
                       uint64_t len, uint64_t off, uint64_t rva, bool has_len, bool has_off,
-                      bool has_rva, const char *regex, size_t limit, size_t offset,
-                      re_strbuf_t *out, re_err_t *err);
+                      bool has_rva, const char *regex, size_t limit, size_t offset, size_t context,
+                      const char *exports, const char *names, const char *order, re_strbuf_t *out,
+                      re_err_t *err);
 
 // Reference blurb for execute_query ops (ida-mcp reference replacement).
 const char *re_mcp_query_reference(const char *query);

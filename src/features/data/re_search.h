@@ -25,6 +25,7 @@ typedef struct {
     uint64_t off; // file offset
     uint32_t rva; // 0 when the offset is not inside a section
     bool has_rva;
+    bool wide;     // the match came from a UTF-16 run, not an ASCII one
     re_str_t text; // the match rendered as text, for immediates and patterns
 } re_search_hit_t;
 
