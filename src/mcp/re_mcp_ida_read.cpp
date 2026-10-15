@@ -49,6 +49,9 @@ void emit_func(re_jw_t *w, const re_func_t *fn) {
     re_jw_khex(w, "address", fn->va, 16);
     re_jw_ku64(w, "rva", fn->rva);
     re_jw_ku64(w, "size", fn->size);
+    re_jw_khex(w, "end", fn->va + fn->size, 16);
+    if (fn->flags & RE_FUNC_UNWIND)
+        re_jw_kbool(w, "unwind", true);
     re_jw_kstr(w, "name", fn->name.n ? fn->name : re_str(""));
 }
 
@@ -56,8 +59,6 @@ bool load_fn(re_ctx_t *ctx, const char *path, int argc, char **argv, bool by_nam
              re_pe_t *pe, re_code_t *code, re_fscan_t *scan, const re_func_t **out) {
     const char *tok = pos1(argc, argv);
     uint32_t rva = 0;
-    uint64_t at = 0;
-    long fi;
     if (!re_prepare(ctx, path, f, pe, code))
         return false;
     re_func_scan(code, ctx->arena, scan);
@@ -68,20 +69,25 @@ bool load_fn(re_ctx_t *ctx, const char *path, int argc, char **argv, bool by_nam
             re_file_close(f);
             return false;
         }
-        at = pe->image_base + rva;
-    } else if (!tok || !re_parse_addr(ctx, re_str(tok), pe, &at)) {
-        if (ctx->err->code == RE_OK)
-            RE_ERR_SET(ctx->err, RE_E_USAGE, "address required");
+        {
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), "0x%x", rva);
+            if (!re_pick_func_at(ctx, scan, pe, buf, NULL, out)) {
+                re_file_close(f);
+                return false;
+            }
+        }
+        return true;
+    }
+    if (!tok) {
+        RE_ERR_SET(ctx->err, RE_E_USAGE, "address required");
         re_file_close(f);
         return false;
     }
-    fi = re_func_index_of(scan, at);
-    if (fi < 0) {
-        RE_ERR_SETF(ctx->err, RE_E_USAGE, "no function at 0x%llx", (unsigned long long)at);
+    if (!re_pick_func_at(ctx, scan, pe, tok, NULL, out)) {
         re_file_close(f);
         return false;
     }
-    *out = re_func_at(scan, (size_t)fi);
     return true;
 }
 

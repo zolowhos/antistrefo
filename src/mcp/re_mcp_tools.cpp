@@ -78,6 +78,11 @@ const ToolSpec kToolArgs[] = {
      {{"address", NULL, "VA or RVA", false}, kEnd, kEnd, kEnd}},
     {"list_strings_filter",
      {{"filter", "--regex", "regex filter for strings", false}, kEnd, kEnd, kEnd}},
+    {"list_strings",
+     {{"pattern", "--pattern", "literal substring filter (not regex)", false},
+      kEnd,
+      kEnd,
+      kEnd}},
     {"list_globals_filter",
      {{"filter", "--regex", "regex filter for exports", false}, kEnd, kEnd, kEnd}},
 };
@@ -140,13 +145,14 @@ bool schema_ida(const char *name, re_strbuf_t *b) {
                        "\"op\":{\"type\":\"string\",\"description\":"
                        "\"Native analysis op (funcs, disasm, decompile, xrefs, strings, ...).\"},"
                        "\"addr\":{\"type\":\"string\",\"description\":"
-                       "\"Address or pattern argument for the op.\"},"
+                       "\"Address (VA or RVA) or search pattern (text:/imm:/raw:/sym:).\"},"
                        "\"pattern\":{\"type\":\"string\",\"description\":"
-                       "\"Alias of addr for search.\"},"
+                       "\"Alias of addr for search, or literal filter for strings.\"},"
                        "\"len\":{\"type\":\"integer\"},"
                        "\"off\":{\"type\":\"integer\"},"
                        "\"rva\":{\"type\":\"integer\"},"
-                       "\"regex\":{\"type\":\"string\"},"
+                       "\"regex\":{\"type\":\"string\",\"description\":"
+                       "\"Regex filter (strings). Prefer pattern for literal substring.\"},"
                        "\"instance_id\":{\"description\":\"Optional database instance id.\"},"
                        "\"limit\":{\"type\":\"integer\"},"
                        "\"offset\":{\"type\":\"integer\"},"
@@ -287,6 +293,15 @@ static int append_query_flags(const re_jr_t *args, re_arena_t *a, char **argv, i
         re_str_t r = re_jr_str(re_jr_get(args, "regex"), "");
         argv[argc++] = const_cast<char *>("--regex");
         argv[argc++] = r.n ? re_arena_strndup(a, r.p, r.n) : const_cast<char *>("");
+    }
+    // For strings, pattern is a literal filter flag (not the search addr alias).
+    if (re_jr_has(args, "pattern")) {
+        re_str_t op = re_jr_str(re_jr_get(args, "op"), "");
+        re_str_t p = re_jr_str(re_jr_get(args, "pattern"), "");
+        if (re_str_eq_cstr(op, "strings") && p.n) {
+            argv[argc++] = const_cast<char *>("--pattern");
+            argv[argc++] = re_arena_strndup(a, p.p, p.n);
+        }
     }
     int64_t limit = re_jr_i64(re_jr_get(args, "limit"), -1);
     if (limit > 0) {

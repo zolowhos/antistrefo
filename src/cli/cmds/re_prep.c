@@ -6,11 +6,13 @@
 
 #include "features/analysis/re_alt.h"
 #include "features/analysis/re_analyze.h"
+#include "features/code/re_func.h"
 #include "features/data/re_gopath.h"
 #include "features/lib/re_sigfile.h"
 #include "features/pe/re_format.h"
 #include "features/pe/re_pe.h"
 #include "utils/text/re_hex.h"
+#include "utils/text/re_strbuf.h"
 
 // Which registered backend an image's machine field asks for. Mapping lives in
 // re_disasm_for_machine so analyze and the commands cannot drift apart.
@@ -137,7 +139,104 @@ bool re_parse_addr(re_ctx_t *ctx, re_str_t s, const re_pe_t *pe, uint64_t *out) 
         }
         acc = acc * mul + (uint64_t)d;
     }
+    // Image-base window => VA; otherwise treat the value as an RVA.
     bool in_image = acc >= pe->image_base && (acc - pe->image_base) < pe->size_of_image;
     *out = in_image ? acc : pe->image_base + acc;
+    return true;
+}
+
+bool re_str_looks_like_addr(re_str_t s) {
+    size_t i = 0;
+    if (s.n == 0)
+        return false;
+    if (s.n > 2 && s.p[0] == '0' && (s.p[1] == 'x' || s.p[1] == 'X'))
+        i = 2;
+    if (i >= s.n)
+        return false;
+    for (; i < s.n; i++) {
+        if (re_hex_val(s.p[i]) < 0)
+            return false;
+    }
+    return true;
+}
+
+void re_emit_func_bounds(re_jw_t *w, const re_func_t *f) {
+    re_jw_khex(w, "func_va", f->va, 16);
+    re_jw_ku64(w, "func_rva", f->rva);
+    re_jw_ku64(w, "func_size", f->size);
+    re_jw_khex(w, "func_end", f->va + f->size, 16);
+    if (f->flags & RE_FUNC_UNWIND)
+        re_jw_kbool(w, "unwind", true);
+}
+
+bool re_snap_insn_va(re_code_t *code, uint64_t fn_va, uint64_t at, uint64_t *insn_va) {
+    uint64_t va = fn_va;
+    if (!insn_va || at < fn_va)
+        return false;
+    *insn_va = at;
+    while (va <= at) {
+        re_insn_t in;
+        if (!re_code_insn(code, va, &in) || in.size == 0)
+            return false;
+        if (at < va + in.size) {
+            *insn_va = va;
+            return true;
+        }
+        va += in.size;
+        if (va - fn_va > 65536u)
+            return false;
+    }
+    return false;
+}
+
+bool re_render_insn_at(re_ctx_t *ctx, re_code_t *code, uint64_t va, re_str_t *text, uint32_t *len) {
+    re_insn_t in;
+    re_strbuf_t line;
+    if (!code || !code->dis || !re_code_insn(code, va, &in))
+        return false;
+    re_strbuf_init(&line, ctx->arena);
+    code->dis->render(code->dis->ctx, &in, ctx->arena, &line);
+    if (text)
+        *text = re_str(line.p ? line.p : "");
+    if (len)
+        *len = in.size;
+    return true;
+}
+
+bool re_pick_func_at(re_ctx_t *ctx, const re_fscan_t *scan, const re_pe_t *pe, const char *pos,
+                     uint64_t *at_out, const re_func_t **out) {
+    uint64_t at = 0;
+    long fi;
+    re_pe_unwind_t u;
+    if (pos) {
+        if (!re_parse_addr(ctx, re_str(pos), pe, &at))
+            return false;
+    } else {
+        if (!pe->entry_rva) {
+            RE_ERR_SET(ctx->err, RE_E_MALFORMED, "no entry point, pass an address");
+            return false;
+        }
+        at = pe->image_base + pe->entry_rva;
+    }
+    if (at_out)
+        *at_out = at;
+    if (at >= pe->image_base && (at - pe->image_base) < pe->size_of_image &&
+        re_pe_unwind_covering(pe, (uint32_t)(at - pe->image_base), &u)) {
+        uint64_t begin = pe->image_base + u.begin;
+        fi = re_func_index_of(scan, begin);
+        if (fi >= 0) {
+            const re_func_t *f = re_func_at(scan, (size_t)fi);
+            if (f && f->va == begin) {
+                *out = f;
+                return true;
+            }
+        }
+    }
+    fi = re_func_index_of(scan, at);
+    if (fi < 0) {
+        RE_ERR_SETF(ctx->err, RE_E_USAGE, "no function at 0x%llx", (unsigned long long)at);
+        return false;
+    }
+    *out = re_func_at(scan, (size_t)fi);
     return true;
 }

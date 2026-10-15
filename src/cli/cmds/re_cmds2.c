@@ -6,17 +6,22 @@
 #include "cli/cmds/re_cmds.h"
 
 #include <stdio.h>
+#include <string.h>
 
+#include "features/code/re_code.h"
 #include "features/data/re_rules.h"
 #include "features/data/re_search.h"
 #include "features/data/re_strings.h"
 #include "features/lib/re_demangle.h"
+#include "features/meta/re_disasm.h"
 #include "features/pe/re_format.h"
 #include "features/pe/re_pe.h"
 #include "utils/json/re_json.h"
 #include "utils/mem/re_buf.h"
 #include "utils/sys/re_entropy.h"
+#include "utils/text/re_strbuf.h"
 #include "utils/text/re_util.h"
+#include "cli/cmds/re_prep.h"
 
 #define SCHEMA2 "antistrefo/1"
 
@@ -28,9 +33,7 @@ static void envelope(re_jw_t *w, const char *tool, re_span_t img, re_format_t fm
     re_jw_ku64(w, "size", img.n);
 }
 
-// The pattern prefix selects the kind and the rest of the pattern is the body.
-// The skip is carried per prefix because text: is five characters and the other
-// two are four, so a single fixed offset silently eats a digit.
+// Prefix selects the kind. text: is five chars; imm:/raw:/sym: are four.
 static re_search_kind_t search_kind(re_str_t pat, re_str_t *body) {
     size_t skip = 0;
     re_search_kind_t kind = RE_SEARCH_BYTES;
@@ -38,10 +41,46 @@ static re_search_kind_t search_kind(re_str_t pat, re_str_t *body) {
         kind = RE_SEARCH_TEXT, skip = 5;
     else if (re_str_starts_cstr(pat, "imm:"))
         kind = RE_SEARCH_IMMEDIATE, skip = 4;
+    else if (re_str_starts_cstr(pat, "raw:"))
+        kind = RE_SEARCH_BYTES, skip = 4;
     else if (re_str_starts_cstr(pat, "sym:"))
         kind = RE_SEARCH_SIGNATURE, skip = 4;
     *body = skip ? re_strn(pat.p + skip, pat.n - skip) : pat;
     return kind;
+}
+
+// Covering instruction for a hit in executable bytes: walk back a short window.
+static bool insn_covering(re_code_t *code, uint64_t va, uint64_t *insn_va, re_str_t *text,
+                          re_arena_t *a) {
+    uint64_t try_va;
+    uint64_t best = 0;
+    bool found = false;
+    re_strbuf_t line;
+    if (!code || !code->dis || !re_code_in_code(code, va))
+        return false;
+    for (uint64_t back = 0; back < 16; back++) {
+        re_insn_t in;
+        try_va = va - back;
+        if (!re_code_in_code(code, try_va) || !re_code_insn(code, try_va, &in))
+            continue;
+        if (va >= try_va && va < try_va + in.size) {
+            best = try_va;
+            found = true;
+            break;
+        }
+    }
+    if (!found)
+        return false;
+    {
+        re_insn_t in;
+        if (!re_code_insn(code, best, &in))
+            return false;
+        re_strbuf_init(&line, a);
+        code->dis->render(code->dis->ctx, &in, a, &line);
+        *insn_va = best;
+        *text = re_str(line.p ? line.p : "");
+        return true;
+    }
 }
 
 // A literal integer immediate. The width is taken from the digit count, which is
@@ -73,7 +112,8 @@ static void emit_text_extra(re_jw_t *w, re_ctx_t *ctx, re_span_t img, const re_s
     re_str_hits_json(w, "after", &ar.after);
 }
 
-static void emit_hits(re_ctx_t *ctx, re_span_t img, re_format_t fmt, re_search_t *s, bool as_text) {
+static void emit_hits(re_ctx_t *ctx, re_span_t img, re_format_t fmt, const re_pe_t *pe,
+                      re_code_t *code, re_search_t *s, bool as_text) {
     re_jw_t w;
     size_t i;
     re_jw_init(&w, ctx->arena);
@@ -82,8 +122,19 @@ static void emit_hits(re_ctx_t *ctx, re_span_t img, re_format_t fmt, re_search_t
     re_jw_arr(&w);
     for (i = 0; i < RE_VEC_LEN(&s->hits); i++) {
         const re_search_hit_t *h = RE_VEC_PTR(&s->hits, re_search_hit_t, i);
+        uint32_t rva = 0;
+        uint64_t insn_va = 0;
+        re_str_t insn_text;
         re_jw_obj(&w);
         re_jw_khex(&w, "off", h->off, 8);
+        if (pe && pe->valid && re_pe_off2rva(pe, h->off, &rva)) {
+            re_jw_ku64(&w, "rva", rva);
+            re_jw_khex(&w, "va", pe->image_base + rva, 16);
+            if (code && insn_covering(code, pe->image_base + rva, &insn_va, &insn_text, ctx->arena)) {
+                re_jw_khex(&w, "insn_va", insn_va, 16);
+                re_jw_kstr(&w, "insn_text", insn_text);
+            }
+        }
         re_jw_kstr(&w, "text", h->text);
         if (as_text)
             emit_text_extra(&w, ctx, img, h);
@@ -97,34 +148,43 @@ static void emit_hits(re_ctx_t *ctx, re_span_t img, re_format_t fmt, re_search_t
 }
 
 int re_cmd_search(re_ctx_t *ctx, const char *path, int argc, char **argv) {
-    // argv[0] is the file, which main already passed as path, so the pattern is
-    // the second argument. Reading argv[0] here searched for the file name.
     const char *pat_arg = re_cmd_positional(argc, argv, 1);
+    re_file_t f;
+    re_pe_t pe;
+    re_code_t code;
+    re_err_code_t e;
+    re_span_t img;
+    re_format_t fmt;
+    re_str_t pat;
+    re_search_kind_t kind;
+    re_search_t s;
+    uint8_t *by = NULL;
+    uint8_t *mk = NULL;
+    size_t n = 0;
+    bool have_code = false;
     if (!pat_arg) {
-        RE_ERR_SET(ctx->err, RE_E_USAGE, "search needs a pattern, usage: search <file> <pattern>");
+        RE_ERR_SET(ctx->err, RE_E_USAGE,
+                   "search needs a pattern: text:<pat> imm:<hex> raw:<hex> sym:<name>");
         return re_err_exit_code(RE_E_USAGE);
     }
-    re_file_t f;
-    re_err_code_t e = re_file_open(path, ctx->arena, &f);
+    e = re_file_open(path, ctx->arena, &f);
     if (e != RE_OK) {
         RE_ERR_SETF(ctx->err, e, "cannot open %s", path);
         return re_err_exit_code(e);
     }
-    re_span_t img = f.whole;
-    re_format_t fmt = re_format_detect(img);
-    re_str_t pat;
-    re_search_kind_t kind = search_kind(re_str(pat_arg), &pat);
-    re_search_t s;
+    img = f.whole;
+    fmt = re_format_detect(img);
+    memset(&pe, 0, sizeof(pe));
+    memset(&code, 0, sizeof(code));
+    if (re_pe_parse(img, ctx->arena, &pe) == RE_OK && pe.valid) {
+        const char *want = re_disasm_for_machine(pe.machine);
+        const re_disasm_t *d = want ? re_disasm_find(want) : NULL;
+        have_code = re_code_init(&code, img, &pe, d, ctx->arena);
+    }
+    kind = search_kind(re_str(pat_arg), &pat);
     re_search_init(&s);
-    uint8_t *by = NULL;
-    uint8_t *mk = NULL;
-    size_t n = 0;
     if (kind == RE_SEARCH_BYTES &&
         !re_search_parse_pattern(ctx->arena, pat.p, &by, &mk, &n, ctx->err)) {
-        // A bare pattern that cannot be hex pairs is searched as text: the docs
-        // promise text without asking for a prefix, and a pattern holding a non hex
-        // byte could never have been hex anyway. The text: prefix still forces text
-        // for a pattern that looks like hex, and a non usage failure is an error.
         if (ctx->err->code != RE_E_USAGE) {
             re_file_close(&f);
             return re_err_exit_code(ctx->err->code);
@@ -144,7 +204,8 @@ int re_cmd_search(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     } else {
         re_search_signature(img, pat, ctx->offset, ctx->limit, ctx->arena, &s);
     }
-    emit_hits(ctx, img, fmt, &s, kind == RE_SEARCH_TEXT || kind == RE_SEARCH_SIGNATURE);
+    emit_hits(ctx, img, fmt, &pe, have_code ? &code : NULL, &s,
+              kind == RE_SEARCH_TEXT || kind == RE_SEARCH_SIGNATURE);
     re_file_close(&f);
     return 0;
 }

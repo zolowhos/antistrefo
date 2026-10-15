@@ -11,7 +11,6 @@
 
 #include "features/code/re_code.h"
 #include "features/code/re_func.h"
-#include "features/code/re_jtable.h"
 #include "features/code/re_stack.h"
 #include "features/code/re_xref.h"
 #include "features/lib/re_flirt.h"
@@ -61,6 +60,7 @@ static void emit_func(re_ctx_t *ctx, re_code_t *code, re_jw_t *w, const re_func_
     re_jw_khex(w, "va", f->va, 16);
     re_jw_ku64(w, "rva", f->rva);
     re_jw_ku64(w, "size", f->size);
+    re_jw_khex(w, "end", f->va + f->size, 16);
     re_jw_ku64(w, "insns", f->n_insns);
     re_jw_ku64(w, "frame", f->frame_size);
     re_jw_ku64(w, "calls", f->n_calls);
@@ -121,38 +121,65 @@ int re_cmd_funcs(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_code_t code;
     re_fscan_t scan;
     re_xrefset_t xs;
+    const char *pos;
+    const re_func_t *one = NULL;
+    uint64_t at = 0;
     if (!re_prepare(ctx, path, &f, &pe, &code))
         return re_err_exit_code(ctx->err->code);
     re_func_scan(&code, ctx->arena, &scan);
     re_xref_build(&code, &scan, &pe, ctx->arena, &xs);
-    const char *sigfile = re_cmd_positional(argc, argv, 1);
-    re_flirt_load_stat_t stat;
-    size_t named = re_prep_names(ctx, path, sigfile, &code, &scan, &stat);
-    re_jw_t w;
-    re_jw_init(&w, ctx->arena);
-    re_envelope(&w, "funcs", f.whole, &pe);
-    re_jw_ku64(&w, "named", named);
-    re_jw_ku64(&w, "signatures", stat.before + stat.loaded);
-    if (sigfile) {
-        re_jw_kstr(&w, "signature_file", re_str(sigfile));
-        re_jw_ku64(&w, "signatures_loaded", stat.loaded);
-        if (stat.rejected)
-            re_jw_ku64(&w, "signatures_rejected", stat.rejected);
+    pos = re_cmd_positional(argc, argv, 1);
+    // Address form returns that one function; non-address strings stay sigfile paths.
+    if (pos && re_str_looks_like_addr(re_str(pos))) {
+        if (!re_pick_func_at(ctx, &scan, &pe, pos, &at, &one)) {
+            re_file_close(&f);
+            return re_err_exit_code(ctx->err->code);
+        }
+        re_prep_names(ctx, path, NULL, &code, &scan, NULL);
+        re_jw_t w;
+        re_jw_init(&w, ctx->arena);
+        re_envelope(&w, "funcs", f.whole, &pe);
+        re_jw_khex(&w, "at", at, 16);
+        re_jw_key(&w, "functions");
+        re_jw_arr(&w);
+        emit_func(ctx, &code, &w, one, re_func_edge_count(&scan, one), &xs, &pe);
+        re_jw_arr_end(&w);
+        re_jw_ku64(&w, "total", 1);
+        re_jw_kbool(&w, "truncated", false);
+        re_jw_obj_end(&w);
+        re_jw_flush(&w, re_ctx_out(ctx));
+        re_file_close(&f);
+        return 0;
     }
-    re_jw_key(&w, "functions");
-    re_jw_arr(&w);
-    size_t shown = 0;
-    size_t total = RE_VEC_LEN(&scan.funcs);
-    for (size_t i = ctx->offset; i < total && shown < ctx->limit; i++, shown++) {
-        const re_func_t *fn = re_func_at(&scan, i);
-        emit_func(ctx, &code, &w, fn, re_func_edge_count(&scan, fn), &xs, &pe);
+    {
+        re_flirt_load_stat_t stat;
+        size_t named = re_prep_names(ctx, path, pos, &code, &scan, &stat);
+        re_jw_t w;
+        size_t shown = 0;
+        size_t total = RE_VEC_LEN(&scan.funcs);
+        re_jw_init(&w, ctx->arena);
+        re_envelope(&w, "funcs", f.whole, &pe);
+        re_jw_ku64(&w, "named", named);
+        re_jw_ku64(&w, "signatures", stat.before + stat.loaded);
+        if (pos) {
+            re_jw_kstr(&w, "signature_file", re_str(pos));
+            re_jw_ku64(&w, "signatures_loaded", stat.loaded);
+            if (stat.rejected)
+                re_jw_ku64(&w, "signatures_rejected", stat.rejected);
+        }
+        re_jw_key(&w, "functions");
+        re_jw_arr(&w);
+        for (size_t i = ctx->offset; i < total && shown < ctx->limit; i++, shown++) {
+            const re_func_t *fn = re_func_at(&scan, i);
+            emit_func(ctx, &code, &w, fn, re_func_edge_count(&scan, fn), &xs, &pe);
+        }
+        re_jw_arr_end(&w);
+        re_jw_ku64(&w, "total", total);
+        re_jw_kbool(&w, "truncated", shown < total);
+        re_jw_ku64(&w, "edges", RE_VEC_LEN(&scan.edges));
+        re_jw_obj_end(&w);
+        re_jw_flush(&w, re_ctx_out(ctx));
     }
-    re_jw_arr_end(&w);
-    re_jw_ku64(&w, "total", total);
-    re_jw_kbool(&w, "truncated", shown < total);
-    re_jw_ku64(&w, "edges", RE_VEC_LEN(&scan.edges));
-    re_jw_obj_end(&w);
-    re_jw_flush(&w, re_ctx_out(ctx));
     re_file_close(&f);
     return 0;
 }
@@ -190,12 +217,19 @@ static const char *kind_name(uint8_t k) {
     }
 }
 
-static void emit_ref(re_jw_t *w, const re_xref_t *r, long func_index) {
+static void emit_ref(re_ctx_t *ctx, re_code_t *code, re_jw_t *w, const re_xref_t *r,
+                     long func_index) {
+    re_str_t text;
+    uint32_t from_len = 0;
     re_jw_obj(w);
     re_jw_khex(w, "from", r->from, 16);
     re_jw_khex(w, "to", r->to, 16);
     re_jw_ku64(w, "rva", r->rva);
     re_jw_kcstr(w, "kind", kind_name(r->kind));
+    if (re_render_insn_at(ctx, code, r->from, &text, &from_len)) {
+        re_jw_kstr(w, "from_text", text);
+        re_jw_ku64(w, "from_len", from_len);
+    }
     if (r->name.n)
         re_jw_kstr(w, "name", r->name);
     if (func_index >= 0)
@@ -204,15 +238,9 @@ static void emit_ref(re_jw_t *w, const re_xref_t *r, long func_index) {
     re_jw_obj_end(w);
 }
 
-// Emit one direction of the answer. A function is queried by its body, because
-// the instructions that make the references are spread through it; anything else
-// is an exact address. indices holds the fwd indices when the subject is a
-// function and is ignored otherwise.
-static void emit_side(re_jw_t *w, const re_xrefset_t *xs, const re_fscan_t *scan, const char *key,
-                      bool from_side, uint64_t subject, uint64_t span, const re_vec_t *indices) {
-    // The count comes from the range query when there is a range, and from the
-    // exact lookup otherwise, so a non function subject still reports its own
-    // references rather than silently reporting none.
+static void emit_side(re_ctx_t *ctx, re_code_t *code, re_jw_t *w, const re_xrefset_t *xs,
+                      const re_fscan_t *scan, const char *key, bool from_side, uint64_t subject,
+                      uint64_t span, const re_vec_t *indices) {
     size_t n = span ? RE_VEC_LEN(indices)
                     : (from_side ? re_xref_from_count(xs, subject) : re_xref_to_count(xs, subject));
     re_jw_key(w, key);
@@ -224,7 +252,7 @@ static void emit_side(re_jw_t *w, const re_xrefset_t *xs, const re_fscan_t *scan
         else
             r = from_side ? re_xref_from_at(xs, subject, i) : re_xref_to_at(xs, subject, i);
         if (r)
-            emit_ref(w, r, re_func_index_of(scan, from_side ? r->to : r->from));
+            emit_ref(ctx, code, w, r, re_func_index_of(scan, from_side ? r->to : r->from));
     }
     re_jw_arr_end(w);
 }
@@ -298,8 +326,9 @@ int re_cmd_xrefs(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_vec_init(&outof, sizeof(uint32_t));
     re_xref_into(&xs, ctx->arena, subject, span, 0, &into);
     re_xref_out_of(&xs, ctx->arena, subject, span, 0, &outof);
-    emit_side(&w, &xs, &scan, "called_from", false, subject, span, &into);
-    emit_side(&w, &xs, &scan, "refers_to", true, subject, span, &outof);
+    // called_from kept for compat; kind=data marks LEA/string refs (not calls).
+    emit_side(ctx, &code, &w, &xs, &scan, "called_from", false, subject, span, &into);
+    emit_side(ctx, &code, &w, &xs, &scan, "refers_to", true, subject, span, &outof);
     re_jw_ku64(&w, "total", RE_VEC_LEN(&into) + RE_VEC_LEN(&outof));
     re_jw_kbool(&w, "truncated", false);
     re_jw_obj_end(&w);
@@ -308,59 +337,6 @@ int re_cmd_xrefs(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     return 0;
 }
 
-// Every jump table found, with its case targets. The count is only reported when
-// the run of targets ended, so this never invents a case number.
-int re_cmd_jtables(re_ctx_t *ctx, const char *path, int argc, char **argv) {
-    re_file_t f;
-    re_pe_t pe;
-    re_code_t code;
-    re_fscan_t scan;
-    re_vec_t tables;
-    (void)argc;
-    (void)argv;
-    if (!re_prepare(ctx, path, &f, &pe, &code))
-        return re_err_exit_code(ctx->err->code);
-    re_vec_init(&tables, sizeof(re_jtable_t));
-    re_func_scan(&code, ctx->arena, &scan);
-    size_t total = re_jtable_scan(&code, &scan, ctx->arena, &tables);
-    re_jw_t w;
-    re_jw_init(&w, ctx->arena);
-    re_envelope(&w, "jtables", f.whole, &pe);
-    re_jw_key(&w, "tables");
-    re_jw_arr(&w);
-    size_t shown = 0;
-    for (size_t i = 0; i < total && shown < ctx->limit; i++, shown++) {
-        const re_jtable_t *t = RE_VEC_PTR(&tables, re_jtable_t, i);
-        re_jw_obj(&w);
-        re_jw_khex(&w, "table", t->table_va, 16);
-        re_jw_ku64(&w, "table_rva", t->table_va - code.base);
-        re_jw_khex(&w, "dispatch", t->at, 16);
-        re_jw_khex(&w, "func", t->func_va, 16);
-        re_jw_ku64(&w, "entries", t->count);
-        re_jw_ku64(&w, "entry_width", t->width);
-        re_jw_ku64(&w, "encoding", t->encoding);
-        // The bounds check in front of the dispatch counts the cases the source
-        // spells out, which for a two level table is more than the entries. Both
-        // are reported because neither alone describes the switch.
-        re_jw_ku64(&w, "case_max", t->bound);
-        re_jw_key(&w, "targets");
-        re_jw_arr(&w);
-        for (uint32_t k = 0; k < t->count && k < 64; k++)
-            re_jw_hex(&w, re_jtable_target(&code, t, k), 16);
-        re_jw_arr_end(&w);
-        re_jw_obj_end(&w);
-    }
-    re_jw_arr_end(&w);
-    re_jw_ku64(&w, "total", total);
-    re_jw_kbool(&w, "truncated", shown < total);
-    re_jw_obj_end(&w);
-    re_jw_flush(&w, re_ctx_out(ctx));
-    re_file_close(&f);
-    return 0;
-}
-// Where to start, and how many bytes to cover. With no address the entry point is
-// the subject, and a function subject is bounded by the function rather than run on
-// into whatever data follows it.
 static bool disasm_span(re_ctx_t *ctx, const re_pe_t *pe, const char *pos, uint64_t *at,
                         uint64_t *span) {
     if (pos) {
@@ -412,29 +388,46 @@ int re_cmd_disasm(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_code_t code;
     re_fscan_t scan;
     re_strbuf_t line;
+    const re_func_t *fn = NULL;
+    uint64_t asked = 0;
     uint64_t at = 0;
     uint64_t span = 256;
+    uint64_t insn_va = 0;
     size_t shown = 0;
+    long fi = -1;
     if (!re_prepare(ctx, path, &f, &pe, &code))
         return re_err_exit_code(ctx->err->code);
     re_func_scan(&code, ctx->arena, &scan);
-    if (!disasm_span(ctx, &pe, re_cmd_positional(argc, argv, 1), &at, &span)) {
+    if (!disasm_span(ctx, &pe, re_cmd_positional(argc, argv, 1), &asked, &span)) {
         re_file_close(&f);
         return re_err_exit_code(ctx->err->code);
     }
-    long fi = re_func_index_of(&scan, at);
-    if (fi >= 0 && !ctx->len) {
-        span = re_func_at(&scan, (size_t)fi)->size;
-        if (span > 512)
-            span = 512;
+    at = asked;
+    fi = re_func_index_of(&scan, at);
+    if (fi >= 0) {
+        fn = re_func_at(&scan, (size_t)fi);
+        if (fn && re_snap_insn_va(&code, fn->va, asked, &insn_va))
+            at = insn_va;
+        if (!ctx->len) {
+            span = fn->size - (at - fn->va);
+            if (span > 512)
+                span = 512;
+        }
     }
     re_strbuf_init(&line, ctx->arena);
     re_jw_t w;
     re_jw_init(&w, ctx->arena);
     re_envelope(&w, "disasm", f.whole, &pe);
+    re_jw_khex(&w, "at", asked, 16);
     re_jw_khex(&w, "start", at, 16);
-    if (fi >= 0)
+    if (fn) {
+        re_emit_func_bounds(&w, fn);
         re_jw_ku64(&w, "func", (uint64_t)fi);
+        if (insn_va && insn_va != asked) {
+            re_jw_khex(&w, "insn_va", insn_va, 16);
+            re_jw_kbool(&w, "mid_insn", true);
+        }
+    }
     re_jw_key(&w, "insns");
     re_jw_arr(&w);
     for (uint64_t va = at; va < at + span && shown < ctx->limit;) {

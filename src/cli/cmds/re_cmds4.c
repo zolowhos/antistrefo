@@ -21,31 +21,11 @@
 #include "cli/render/re_render2.h"
 #include "cli/render/re_report.h"
 
-// The function the command works on: the one containing the address given, or the
-// function at the entry point when no address was given. A function subject is
-// resolved here so the command answers the question a reader actually asked, which
-// is "show me this function", not "show me these bytes".
+#include <stdio.h>
+
 static bool pick_func(re_ctx_t *ctx, const re_fscan_t *scan, const re_pe_t *pe, const char *pos,
                       const re_func_t **out) {
-    uint64_t at = 0;
-    long fi;
-    if (pos) {
-        if (!re_parse_addr(ctx, re_str(pos), pe, &at))
-            return false;
-    } else {
-        if (!pe->entry_rva) {
-            RE_ERR_SET(ctx->err, RE_E_MALFORMED, "no entry point, pass an address");
-            return false;
-        }
-        at = pe->image_base + pe->entry_rva;
-    }
-    fi = re_func_index_of(scan, at);
-    if (fi < 0) {
-        RE_ERR_SETF(ctx->err, RE_E_USAGE, "no function at 0x%llx", (unsigned long long)at);
-        return false;
-    }
-    *out = re_func_at(scan, (size_t)fi);
-    return true;
+    return re_pick_func_at(ctx, scan, pe, pos, NULL, out);
 }
 
 // The xref set is what turns a call target into an imported name, so the emitter
@@ -106,6 +86,24 @@ static void write_map(re_jw_t *w, const re_vec_t *sites, const re_xrefset_t *xs)
     re_jw_arr_end(w);
 }
 
+static void write_disps(re_jw_t *w, const re_stack_t *st) {
+    size_t i;
+    re_jw_key(w, "displacements");
+    re_jw_arr(w);
+    for (i = 0; i < st->n_slots; i++) {
+        int32_t d = st->slots[i];
+        char name[24];
+        unsigned m = d < 0 ? (unsigned)(-d) : (unsigned)d;
+        snprintf(name, sizeof(name), "%s%u", d < 0 ? "local_m" : "local_p", m);
+        re_jw_obj(w);
+        re_jw_kcstr(w, "name", name);
+        re_jw_ki64(w, "disp", d);
+        re_jw_khex(w, "disp_hex", (uint64_t)(uint32_t)d, 8);
+        re_jw_obj_end(w);
+    }
+    re_jw_arr_end(w);
+}
+
 int re_cmd_decompile(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_file_t f;
     re_pe_t pe;
@@ -116,11 +114,12 @@ int re_cmd_decompile(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_stack_t st;
     re_strbuf_t text;
     const re_func_t *fn = NULL;
+    uint64_t at = 0;
     if (!re_prepare(ctx, path, &f, &pe, &code))
         return re_err_exit_code(ctx->err->code);
     re_func_scan(&code, ctx->arena, &scan);
     re_prep_names(ctx, path, NULL, &code, &scan, NULL);
-    if (!pick_func(ctx, &scan, &pe, re_cmd_positional(argc, argv, 1), &fn)) {
+    if (!re_pick_func_at(ctx, &scan, &pe, re_cmd_positional(argc, argv, 1), &at, &fn)) {
         re_file_close(&f);
         return re_err_exit_code(ctx->err->code);
     }
@@ -145,12 +144,15 @@ int re_cmd_decompile(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_jw_t w;
     re_jw_init(&w, ctx->arena);
     re_envelope(&w, "decompile", f.whole, &pe);
+    re_jw_khex(&w, "at", at, 16);
+    re_emit_func_bounds(&w, fn);
     re_jw_khex(&w, "va", fn->va, 16);
     re_jw_ku64(&w, "rva", fn->rva);
     re_jw_ku64(&w, "size", fn->size);
     re_jw_kcstr(&w, "cc", re_cc_name(st.cc));
     re_jw_ku64(&w, "params", st.n_params);
     re_jw_ku64(&w, "locals", st.n_locals);
+    write_disps(&w, &st);
     re_jw_kbool(&w, "ok", ok);
     if (fn->name.n)
         re_jw_kstr(&w, "name", fn->name);
@@ -161,6 +163,54 @@ int re_cmd_decompile(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     write_map(&w, &sites, &xs);
     write_refs(&w, "callers", &xs, ctx->arena, fn->va, fn->size, true);
     write_refs(&w, "callees", &xs, ctx->arena, fn->va, fn->size, false);
+    re_jw_obj_end(&w);
+    re_jw_flush(&w, re_ctx_out(ctx));
+    re_file_close(&f);
+    return 0;
+}
+
+// Every jump table found, with its case targets. The count is only reported when
+// the run of targets ended, so this never invents a case number.
+int re_cmd_jtables(re_ctx_t *ctx, const char *path, int argc, char **argv) {
+    re_file_t f;
+    re_pe_t pe;
+    re_code_t code;
+    re_fscan_t scan;
+    re_vec_t tables;
+    (void)argc;
+    (void)argv;
+    if (!re_prepare(ctx, path, &f, &pe, &code))
+        return re_err_exit_code(ctx->err->code);
+    re_vec_init(&tables, sizeof(re_jtable_t));
+    re_func_scan(&code, ctx->arena, &scan);
+    size_t total = re_jtable_scan(&code, &scan, ctx->arena, &tables);
+    re_jw_t w;
+    re_jw_init(&w, ctx->arena);
+    re_envelope(&w, "jtables", f.whole, &pe);
+    re_jw_key(&w, "tables");
+    re_jw_arr(&w);
+    size_t shown = 0;
+    for (size_t i = 0; i < total && shown < ctx->limit; i++, shown++) {
+        const re_jtable_t *t = RE_VEC_PTR(&tables, re_jtable_t, i);
+        re_jw_obj(&w);
+        re_jw_khex(&w, "table", t->table_va, 16);
+        re_jw_ku64(&w, "table_rva", t->table_va - code.base);
+        re_jw_khex(&w, "dispatch", t->at, 16);
+        re_jw_khex(&w, "func", t->func_va, 16);
+        re_jw_ku64(&w, "entries", t->count);
+        re_jw_ku64(&w, "entry_width", t->width);
+        re_jw_ku64(&w, "encoding", t->encoding);
+        re_jw_ku64(&w, "case_max", t->bound);
+        re_jw_key(&w, "targets");
+        re_jw_arr(&w);
+        for (uint32_t k = 0; k < t->count && k < 64; k++)
+            re_jw_hex(&w, re_jtable_target(&code, t, k), 16);
+        re_jw_arr_end(&w);
+        re_jw_obj_end(&w);
+    }
+    re_jw_arr_end(&w);
+    re_jw_ku64(&w, "total", total);
+    re_jw_kbool(&w, "truncated", shown < total);
     re_jw_obj_end(&w);
     re_jw_flush(&w, re_ctx_out(ctx));
     re_file_close(&f);

@@ -28,18 +28,18 @@ static const re_cmd_t kCommands[] = {
      re_cmd_imports, true, false, false},
     {"exports", "exported symbols, demangled when possible", "exports <file>", re_cmd_exports, true,
      false, false},
-    {"strings", "printable strings, ascii and utf-16, with a regex filter",
-     "strings <file> [--regex R] [--context N]", re_cmd_strings, true, false, false},
+    {"strings", "printable strings; --pattern literal, --regex regex",
+     "strings <file> [--pattern P] [--regex R]", re_cmd_strings, true, false, false},
     {"vtables", "C++ class tables, named from the image's own RTTI where it has any",
      "vtables <file>", re_cmd_vtables, true, false, false},
-    {"search", "find text, an immediate value, or a hex pattern with wildcards",
+    {"search", "find text:, imm:, raw:/hex, or sym: with VA and insn text",
      "search <file> <pattern>", re_cmd_search, true, false, false},
     {"rules", "capability findings with the evidence that fired each rule", "rules <file>",
      re_cmd_rules, true, false, false},
     {"entropy", "windowed entropy, to locate packed or encrypted regions",
      "entropy <file> [--win N] [--step N]", re_cmd_entropy, true, false, false},
-    {"funcs", "recovered functions with size, frame and call counts", "funcs <file> [sigs.pat]",
-     re_cmd_funcs, true, false, false},
+    {"funcs", "recovered functions; address arg returns that one function",
+     "funcs <file> [addr|sigs.pat]", re_cmd_funcs, true, false, false},
     {"rename", "set a display name for a function; persists in <file>.alt",
      "rename <file> <addr|name> <new>", re_cmd_rename, true, false, true},
     {"list_names", "list user renames from the sidecar .alt mapping", "list_names <file>",
@@ -103,7 +103,8 @@ static const re_cmd_t kCommands[] = {
      false, true},
     {"list_strings_filter", "strings filtered by regex", "list_strings_filter <file>",
      re_cmd_strings, true, false, true},
-    {"list_strings", "printable strings", "list_strings <file>", re_cmd_strings, true, false, true},
+    {"list_strings", "printable strings (pattern=literal substring)", "list_strings <file>",
+     re_cmd_strings, true, false, true},
     {"decompile_function", "C-like decompile of one function", "decompile_function <file> [a]",
      re_cmd_decompile, true, false, true},
     {"disassemble_function", "disassemble one function", "disassemble_function <file> [a]",
@@ -233,11 +234,11 @@ static bool apply_path(re_ctx_t *ctx, re_str_t a, const char *val) {
 
 static bool takes_value(re_str_t a) {
     return re_str_eq_cstr(a, "--format") || re_str_eq_cstr(a, "--regex") ||
-           re_str_eq_cstr(a, "--limit") || re_str_eq_cstr(a, "--offset") ||
-           re_str_eq_cstr(a, "--context") || re_str_eq_cstr(a, "--off") ||
-           re_str_eq_cstr(a, "--rva") || re_str_eq_cstr(a, "--len") ||
-           re_str_eq_cstr(a, "--exports") || re_str_eq_cstr(a, "--names") ||
-           re_str_eq_cstr(a, "--order");
+           re_str_eq_cstr(a, "--pattern") || re_str_eq_cstr(a, "--limit") ||
+           re_str_eq_cstr(a, "--offset") || re_str_eq_cstr(a, "--context") ||
+           re_str_eq_cstr(a, "--off") || re_str_eq_cstr(a, "--rva") ||
+           re_str_eq_cstr(a, "--len") || re_str_eq_cstr(a, "--exports") ||
+           re_str_eq_cstr(a, "--names") || re_str_eq_cstr(a, "--order");
 }
 
 static const char *glued_value(re_str_t a) {
@@ -245,6 +246,8 @@ static const char *glued_value(re_str_t a) {
         return a.p + 9;
     if (re_str_starts_cstr(a, "--regex="))
         return a.p + 8;
+    if (re_str_starts_cstr(a, "--pattern="))
+        return a.p + 10;
     if (re_str_starts_cstr(a, "--len="))
         return a.p + 6;
     if (re_str_starts_cstr(a, "--off="))
@@ -285,6 +288,11 @@ static bool apply_flag(re_ctx_t *ctx, re_str_t a, const char *val, re_err_t *err
         ctx->has_regex = true;
         return true;
     }
+    if (re_str_starts_cstr(a, "--pattern")) {
+        ctx->pattern = re_str(val);
+        ctx->has_pattern = true;
+        return true;
+    }
     bool is_off = re_str_starts_cstr(a, "--off");
     bool is_len = re_str_starts_cstr(a, "--len");
     bool is_context = re_str_starts_cstr(a, "--context");
@@ -321,6 +329,8 @@ bool re_cmd_parse(re_ctx_t *ctx, int argc, char **argv, int *first_positional, r
     ctx->off = 0;
     ctx->len = 256;
     ctx->has_regex = false;
+    ctx->has_pattern = false;
+    ctx->pattern = re_str(NULL);
     ctx->no_color = false;
     ctx->exports_path = re_str(NULL);
     ctx->names_path = re_str(NULL);
