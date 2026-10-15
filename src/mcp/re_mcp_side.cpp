@@ -8,6 +8,7 @@
 #include "mcp/re_mcp.h"
 
 #include <atomic>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -121,16 +122,35 @@ std::string read_path_file(void) {
     return std::string(buf);
 }
 
+// Fixed loopback port for the side channel, so MCP client configs can stay
+// stable across GUI restarts. A second instance that finds it taken falls
+// back to an ephemeral port rather than failing to serve.
+constexpr uint16_t kSidePort = 52565;
+
 sock_t listen_tcp(char *endpoint, size_t cap) {
     sock_t fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     sockaddr_in addr{};
     socklen_t alen = sizeof(addr);
     if (fd == kInvalid)
         return kInvalid;
+#if !defined(_WIN32)
+    // POSIX holds the port in TIME_WAIT across a quick restart; this lets us
+    // rebind it. On Windows the same flag lets a second instance steal the
+    // fixed port outright, which would defeat the ephemeral fallback below.
+    int one = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&one, sizeof(one));
+#endif
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    addr.sin_port = 0;
-    if (bind(fd, (sockaddr *)&addr, sizeof(addr)) != 0 || listen(fd, 4) != 0) {
+    addr.sin_port = htons(kSidePort);
+    if (bind(fd, (sockaddr *)&addr, sizeof(addr)) != 0) {
+        addr.sin_port = 0;
+        if (bind(fd, (sockaddr *)&addr, sizeof(addr)) != 0) {
+            sock_close(fd);
+            return kInvalid;
+        }
+    }
+    if (listen(fd, 4) != 0) {
         sock_close(fd);
         return kInvalid;
     }
@@ -210,28 +230,33 @@ sock_t connect_endpoint(const char *endpoint) {
     return kInvalid;
 }
 
+#if defined(_WIN32)
+// CRT fds do not work here: ReadFile on a Winsock handle fails with
+// ERROR_INVALID_FUNCTION on modern Windows, which used to end every client the
+// moment it connected. Pump the socket with recv/send instead.
+size_t sock_read_cb(void *ctx, char *buf, size_t cap) {
+    int n = recv((sock_t)(intptr_t)ctx, buf, (int)cap, 0);
+    return n > 0 ? (size_t)n : 0;
+}
+
+bool sock_write_cb(void *ctx, const char *data, size_t n) {
+    sock_t fd = (sock_t)(intptr_t)ctx;
+    size_t off = 0;
+    while (off < n) {
+        int sent = send(fd, data + off, (int)(n - off), 0);
+        if (sent <= 0)
+            return false;
+        off += (size_t)sent;
+    }
+    return send(fd, "\n", 1, 0) == 1;
+}
+#endif
+
 void serve_client(sock_t cfd) {
 #if defined(_WIN32)
-    int raw = _open_osfhandle((intptr_t)cfd, _O_RDWR | _O_BINARY);
-    if (raw < 0) {
-        sock_close(cfd);
-        return;
-    }
-    int out_raw = _dup(raw);
-    FILE *in = _fdopen(raw, "rb");
-    FILE *out = out_raw >= 0 ? _fdopen(out_raw, "wb") : nullptr;
-    if (!in || !out) {
-        if (in)
-            std::fclose(in);
-        if (out)
-            std::fclose(out);
-        else {
-            if (out_raw >= 0)
-                _close(out_raw);
-            _close(raw);
-        }
-        return;
-    }
+    void *ctx = (void *)(intptr_t)cfd;
+    re_mcp_serve_callbacks(ctx, sock_read_cb, ctx, sock_write_cb);
+    sock_close(cfd);
 #else
     int out_fd = dup((int)cfd);
     FILE *in = fdopen((int)cfd, "r");
@@ -247,10 +272,10 @@ void serve_client(sock_t cfd) {
             close(out_fd);
         return;
     }
-#endif
     re_mcp_serve_files(in, out);
     std::fclose(in);
     std::fclose(out);
+#endif
 }
 
 void accept_loop(void) {
@@ -281,22 +306,28 @@ std::string resolve_endpoint(const char *endpoint) {
 int relay_stdio(sock_t fd) {
     std::thread up([fd]() {
         char buf[4096];
-        size_t got;
-        while ((got = std::fread(buf, 1, sizeof(buf), stdin)) > 0) {
+        // read/_read return as soon as any bytes arrive; fread would wait for a
+        // full buffer or EOF and deadlock an interactive client that holds
+        // stdin open while it waits for the response.
 #if defined(_WIN32)
-            if (send(fd, buf, (int)got, 0) <= 0)
-                break;
-#else
+        int got;
+        while ((got = _read(_fileno(stdin), buf, (unsigned)sizeof(buf))) > 0) {
             if (send(fd, buf, got, 0) <= 0)
                 break;
-#endif
         }
-#if defined(_WIN32)
         shutdown(fd, SD_SEND);
 #else
+        ssize_t got;
+        while ((got = read(STDIN_FILENO, buf, sizeof(buf))) > 0) {
+            if (send(fd, buf, (size_t)got, 0) <= 0)
+                break;
+        }
         shutdown(fd, SHUT_WR);
 #endif
     });
+    // Detached on purpose: when the server drops the socket the recv loop ends
+    // and main returns while this thread still blocks in read on stdin. Joining
+    // here would hang the relay and hide the dead server from the client.
     char buf[4096];
 #if defined(_WIN32)
     int n;
@@ -313,8 +344,7 @@ int relay_stdio(sock_t fd) {
         std::fflush(stdout);
     }
 #endif
-    if (up.joinable())
-        up.join();
+    up.detach();
     return 0;
 }
 
@@ -374,6 +404,11 @@ int re_mcp_attach_main(const char *endpoint) {
     int rc;
     if (!sock_init())
         return 6;
+#if defined(_WIN32)
+    // Text mode would translate newlines on the protocol stream both ways.
+    _setmode(_fileno(stdin), _O_BINARY);
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
     ep = resolve_endpoint(endpoint);
     if (ep.empty()) {
         std::fprintf(stderr, "mcp --attach needs an endpoint, ANTISTREFO_MCP, or a running gui\n");

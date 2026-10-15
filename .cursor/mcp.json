@@ -1,0 +1,8 @@
+{
+    "mcpServers": {
+        "antistrefo": {
+            "command": "antistrefo",
+            "args": ["mcp", "--attach", "tcp:127.0.0.1:52565"]
+        }
+    }
+}

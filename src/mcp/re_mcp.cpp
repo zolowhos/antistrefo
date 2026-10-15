@@ -16,6 +16,13 @@
 #include <cstring>
 #include <string>
 
+#if defined(_WIN32)
+#    include <fcntl.h>
+#    include <io.h>
+#else
+#    include <unistd.h>
+#endif
+
 namespace {
 
 // MCP uses newline delimited JSON-RPC, not the Content-Length framing that LSP
@@ -44,14 +51,13 @@ constexpr int kErrNoMethod = -32601;
 
 struct Server {
     re_arena_t arena;
-    FILE *out;
+    void *wctx;
+    re_mcp_write_fn write;
 };
 
 void write_frame(Server *srv, const char *json, size_t n) {
-    FILE *out = srv && srv->out ? srv->out : stdout;
-    std::fwrite(json, 1, n, out);
-    std::fputc('\n', out);
-    std::fflush(out);
+    if (srv && srv->write)
+        srv->write(srv->wctx, json, n);
 }
 
 void send_error(Server *srv, re_arena_t *a, double id, int code, const char *msg) {
@@ -222,27 +228,50 @@ static void serve_frame(Server *srv, const char *line, size_t n) {
     re_arena_free(&req);
 }
 
-static int serve_loop(FILE *in, FILE *out) {
+size_t file_read_cb(void *ctx, char *buf, size_t cap) {
+    // Go around stdio on purpose: fread waits for a full buffer or EOF, which
+    // deadlocks an interactive client that keeps the stream open while it
+    // waits for a response. read returns as soon as any bytes arrive.
+#if defined(_WIN32)
+    int n = _read(_fileno((FILE *)ctx), buf, (unsigned)cap);
+#else
+    ssize_t n = read(fileno((FILE *)ctx), buf, cap);
+#endif
+    return n > 0 ? (size_t)n : 0;
+}
+
+bool file_write_cb(void *ctx, const char *data, size_t n) {
+    FILE *out = (FILE *)ctx;
+    if (std::fwrite(data, 1, n, out) != n || std::fputc('\n', out) == EOF)
+        return false;
+    std::fflush(out);
+    return true;
+}
+
+static int serve_loop(void *rctx, re_mcp_read_fn rf, void *wctx, re_mcp_write_fn wf) {
     Server srv;
     re_arena_init(&srv.arena, 256u * 1024u);
-    srv.out = out ? out : stdout;
+    srv.wctx = wctx;
+    srv.write = wf;
     std::string line;
     line.reserve(4096);
-    int c;
-    FILE *src = in ? in : stdin;
-    while ((c = std::fgetc(src)) != EOF) {
-        if (c != '\n') {
-            line.push_back((char)c);
-            if (line.size() > (size_t)kFrameMax) {
-                send_error(&srv, &srv.arena, 0, kErrInvalid, "frame too large");
-                line.clear();
+    char buf[4096];
+    size_t got;
+    while ((got = rf(rctx, buf, sizeof(buf))) > 0) {
+        for (size_t i = 0; i < got; i++) {
+            if (buf[i] != '\n') {
+                line.push_back(buf[i]);
+                if (line.size() > (size_t)kFrameMax) {
+                    send_error(&srv, &srv.arena, 0, kErrInvalid, "frame too large");
+                    line.clear();
+                }
+                continue;
             }
-            continue;
+            if (line.empty())
+                continue;
+            serve_frame(&srv, line.data(), line.size());
+            line.clear();
         }
-        if (line.empty())
-            continue;
-        serve_frame(&srv, line.data(), line.size());
-        line.clear();
     }
     re_arena_free(&srv.arena);
     return 0;
@@ -255,12 +284,25 @@ const char *re_mcp_protocol_version(void) {
 }
 
 int re_mcp_serve_files(FILE *in, FILE *out) {
-    return serve_loop(in, out);
+    FILE *src = in ? in : stdin;
+    FILE *dst = out ? out : stdout;
+    return serve_loop(src, file_read_cb, dst, file_write_cb);
+}
+
+int re_mcp_serve_callbacks(void *rctx, re_mcp_read_fn rf, void *wctx, re_mcp_write_fn wf) {
+    if (!rf || !wf)
+        return 2;
+    return serve_loop(rctx, rf, wctx, wf);
 }
 
 int re_mcp_main(void) {
     // Mute logging outright. stdout carries protocol frames, so a stray write
     // there looks like a protocol violation to the client.
     re_log_set_mute(true);
-    return serve_loop(stdin, stdout);
+#if defined(_WIN32)
+    // Text mode would translate newlines on the protocol stream both ways.
+    _setmode(_fileno(stdin), _O_BINARY);
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
+    return re_mcp_serve_files(stdin, stdout);
 }
