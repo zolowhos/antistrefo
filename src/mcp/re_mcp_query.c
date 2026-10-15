@@ -165,20 +165,23 @@ const char *re_mcp_query_reference(const char *query) {
         "Addresses: VA if inside image-base window, else RVA (0x... or hex).\n"
         "Example: op=decompile addr=0x180001000\n"
         "Example: op=strings pattern=http  (literal) or regex=https?://\n"
-        "Example: op=search addr=imm:1E78  (also text: raw: sym:)\n"
+        "Example: op=search addr=imm:00001E78  (dword; also text: raw: sym:)\n"
         "Unfiltered strings/search on large images need a filter per call.\n"
         "open_database first. save_database is unsupported.\n";
     static const char kDecomp[] =
         "Decompile: execute_query op=decompile addr=<ea>\n"
-        "Returns Tier B C-like source, at/func_va/func_end, displacements[],\n"
+        "Returns Tier B C-like source, at/func_va/func_end, stack_slots[],\n"
         "and mem_ops[] ({va,reg,disp,size,op}) for every [reg+/-disp].\n"
-        "Every printed local_* appears in displacements[]. Image VAs print as 0x.\n"
+        "Every printed local_* appears in stack_slots[]. Image VAs print as 0x.\n"
+        "Non-stack loads/stores print *(T*)(reg +/- 0xDisp) when disp is known.\n"
+        "mem_ops page starts at addr when set so large funcs do not truncate past it.\n"
         "A lone cmp [reg+disp], imm is not an enum: proven offset != inferred name.\n"
         ".pdata begin wins when recovered size disagrees.\n";
     static const char kXref[] =
         "Xrefs: execute_query op=xrefs addr=<ea>\n"
         "called_from kept for compat; each hit has kind (call/jump/cond/data)\n"
         "and from_text/from_len for the referring instruction.\n"
+        "Each code hit also carries window[]: ~32 bytes of disasm each side of from.\n"
         "Pointer-table cells in readable non-exec sections that equal a string VA\n"
         "are kind=data; global_slot when the target is BSS/common. total=0 if none.\n";
     static const char kStr[] =
@@ -188,13 +191,17 @@ const char *re_mcp_query_reference(const char *query) {
     static const char kSearch[] =
         "Search: addr=text:<pat> | imm:<hex|0xhex> | raw:<hexpairs> | sym:<name>\n"
         "imm: accepts optional 0x and searches every LE/BE width that can hold v.\n"
+        "Digit count does not pin width: imm:1E78 is 16-bit form and floods; a\n"
+        "dword field offset must be zero-padded (imm:00001E78 or imm:0x00001E78).\n"
         "Bare hex pairs are raw bytes (raw: alias). Hits include va/rva;\n"
         "executable hits also include insn_va and insn_text (opcode-aligned).\n"
+        "Hits whose covering insn does not carry v as imm or disp are dropped.\n"
         "When the hit lands mid-immediate, mid_imm=true and insn_va is the opcode.\n"
-        "Example imm query: any imm32 stride as imm:0x148 or imm:148.\n";
+        "Example imm32: imm:00000148 or imm:0x148 (multi-width still applies).\n";
     static const char kDisasm[] =
-        "Disasm: op=disasm addr=<ea>. Emits func_va/func_rva/func_size/func_end\n"
-        "and unwind when known. Mid-instruction addresses snap to insn_va.\n";
+        "Disasm: op=disasm addr=<ea> [len=N]. Emits func_va/func_rva/func_size/func_end\n"
+        "and unwind when known. Mid-instruction addresses snap to insn_va.\n"
+        "len is bytes after the requested address; snap does not shrink that window.\n";
     static const char kName[] = "Namerefs: execute_query op=namerefs exports=<provider>\n"
                                 "  or names=<file> [order=<file>]\n"
                                 "RIP-relative loads of those exact names, in instruction order.\n";

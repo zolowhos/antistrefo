@@ -270,9 +270,10 @@ static void test_lowering_forms(re_arena_t *a) {
     RE_CHECK_EQ_U(lowern("80241820", a), 8);
     // A zero immediate is still an immediate. Reading it as absent would substitute a
     // register for the number the author wrote, which is a plausible wrong answer
-    // rather than an obvious one, so both forms are pinned.
+    // rather than an obvious one, so both forms are pinned. [reg+disp] lowers as
+    // CONST+INTADD (twice for RMW), so the count is two above the old opaque HEAP.
     RE_CHECK_EQ_U((uint64_t)lower1("4883601800", a), RE_OP_CMP); // and [rax+0x18],0
-    RE_CHECK_EQ_U(lowern("4883601800", a), 8);
+    RE_CHECK_EQ_U(lowern("4883601800", a), 10);
     RE_CHECK_EQ_U((uint64_t)lower1("48c7c000000000", a), RE_OP_CONST); // mov rax,0
     RE_CHECK_EQ_U((uint64_t)lower1("4883c000", a), RE_OP_CMP);         // add rax,0
     // The direction of a two operand form comes from bit 1, not bit 0: 0x00 and 0x01

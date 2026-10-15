@@ -56,7 +56,7 @@ static void test_ptr_table_xref(re_arena_t *a) {
     }
 }
 
-// Positive frame slot [rbp+0x10] must enter displacements via note_slot.
+// Positive frame slot [rbp+0x10] must enter stack slots via note_slot.
 static void test_positive_slot(re_arena_t *a) {
     static const uint8_t kBody[] = {
         0x55,                   // push rbp

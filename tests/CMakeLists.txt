@@ -128,6 +128,16 @@ if(MSVC)
 endif()
 add_test(NAME qa_contracts COMMAND re_test_qa_contracts)
 
+# Field-offset agent gaps: imm snap, decompile reg+disp, imm filter (synthetic PE).
+add_executable(re_test_field_offset test_field_offset.c)
+target_link_libraries(re_test_field_offset PRIVATE re_core re_utils re_flags)
+if(MSVC)
+    set_property(TARGET re_test_field_offset
+        PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_definitions(re_test_field_offset PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+add_test(NAME field_offset COMMAND re_test_field_offset)
+
 # The JSON reader suite is separate because a reader that is lenient about a malformed
 # frame is a protocol bug that shows up as a mysterious client disconnect.
 add_executable(re_test_jr test_jr.c)

@@ -63,8 +63,11 @@ endif()
 if(NOT dc_out MATCHES "\"func_va\":\"${fn_hex}\"")
     message(FATAL_ERROR "decompile missing func_va: ${dc_out}")
 endif()
-if(NOT dc_out MATCHES "\"displacements\"")
-    message(FATAL_ERROR "decompile missing displacements: ${dc_out}")
+if(NOT dc_out MATCHES "\"stack_slots\"")
+    message(FATAL_ERROR "decompile missing stack_slots: ${dc_out}")
+endif()
+if(dc_out MATCHES "\"displacements\"")
+    message(FATAL_ERROR "decompile still emits displacements (renamed to stack_slots): ${dc_out}")
 endif()
 
 # raw: of "cmp rax,1" prologue in .text (file offset in section => va/rva + insn).
@@ -112,7 +115,7 @@ if(NOT imm0x_out MATCHES "mov eax, 0x1")
     message(FATAL_ERROR "imm:0x should snap to covering mov: ${imm0x_out}")
 endif()
 
-# Decompile agent surfaces: mem_ops present; displacements key already checked.
+# Decompile agent surfaces: mem_ops present; stack_slots key already checked.
 if(NOT dc_out MATCHES "\"mem_ops\"")
     message(FATAL_ERROR "decompile missing mem_ops: ${dc_out}")
 endif()
@@ -139,6 +142,25 @@ endif()
 # kind is always present on each ref; from_text when decode works.
 if(NOT xref_out MATCHES "\"kind\":")
     message(FATAL_ERROR "xrefs should emit kind: ${xref_out}")
+endif()
+if(NOT xref_out MATCHES "\"window\"")
+    message(FATAL_ERROR "xrefs should emit disasm window around from: ${xref_out}")
+endif()
+
+# --len counts bytes after the requested address even when mid-insn snap moves start.
+execute_process(
+    COMMAND "${ANTISTREFO}" disasm "${WORK}" "${mid_va}" --len 32
+    OUTPUT_VARIABLE dis_len_out RESULT_VARIABLE rc)
+if(NOT rc EQUAL 0)
+    message(FATAL_ERROR "disasm --len failed: ${rc}: ${dis_len_out}")
+endif()
+if(NOT dis_len_out MATCHES "\"mid_insn\":true")
+    message(FATAL_ERROR "disasm --len should still snap mid-insn: ${dis_len_out}")
+endif()
+# Asked mid_va (= fn+1); window must reach at least asked+32 => past fn+33.
+# Fixture fn is short; pin that start is snapped earlier than at.
+if(NOT dis_len_out MATCHES "\"start\":\"${fn_hex}\"")
+    message(FATAL_ERROR "disasm --len start should be snapped insn: ${dis_len_out}")
 endif()
 
 message(STATUS "agent feedback content pins ok")
