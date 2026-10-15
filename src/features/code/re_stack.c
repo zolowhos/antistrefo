@@ -37,8 +37,10 @@ static void note_read(flow_t *fl, unsigned r) {
 // and the difference between them is not a thousand locals.
 static void note_slot(flow_t *fl, int64_t d) {
     uint32_t i;
-    if (d > 0 || d < -0x4000)
-        return; // an argument slot or something implausible, not a local
+    // Positive frame/arg slots are real locals the emitter may print as local_p*.
+    // Only reject the implausible extremes; MS shadow pruning lives in apply_image.
+    if (d > 0x1000 || d < -0x4000)
+        return;
     for (i = 0; i < fl->n_slots; i++) {
         if (fl->slots[i] == (int32_t)d)
             return;

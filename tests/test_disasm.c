@@ -378,6 +378,14 @@ static void test_implicit_reg(re_arena_t *a) {
     // naming these operands must not have widened the 64-bit push and pop exception.
     RE_CHECK_EQ_STR(render1("89c0", a, NULL), "mov eax, eax");
     RE_CHECK_EQ_STR(render1("83f801", a, NULL), "cmp eax, 0x1");
+    // movsxd r64, r/m32: dest is the reg field, never r/m-first.
+    {
+        uint8_t len = 0;
+        RE_CHECK_EQ_STR(render1("486300", a, &len), "movsxd rax, [rax]");
+        RE_CHECK_EQ_U(len, 3);
+        RE_CHECK_EQ_STR(render1("48634504", a, &len), "movsxd rax, [rbp+0x4]");
+        RE_CHECK_EQ_U(len, 4);
+    }
 }
 
 int main(void) {

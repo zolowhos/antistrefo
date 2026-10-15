@@ -29,13 +29,14 @@ typedef enum {
 
 // What the target is. This is the question a caller actually has, and answering
 // it here keeps every consumer from re-deriving it.
-#define RE_XRF_CODE 0x01u    // lands in a function we recovered
-#define RE_XRF_IMPORT 0x02u  // lands in an IAT slot, so it is an imported symbol
-#define RE_XRF_EXPORT 0x04u  // lands on a named export
-#define RE_XRF_STRING 0x08u  // lands on a printable string
-#define RE_XRF_DATA 0x10u    // lands in a data section
-#define RE_XRF_OUTSIDE 0x20u // not mapped in this image at all
-#define RE_XRF_JTABLE 0x40u  // lands on a jump table
+#define RE_XRF_CODE 0x01u        // lands in a function we recovered
+#define RE_XRF_IMPORT 0x02u      // lands in an IAT slot, so it is an imported symbol
+#define RE_XRF_EXPORT 0x04u      // lands on a named export
+#define RE_XRF_STRING 0x08u      // lands on a printable string
+#define RE_XRF_DATA 0x10u        // lands in a data section
+#define RE_XRF_OUTSIDE 0x20u     // not mapped in this image at all
+#define RE_XRF_JTABLE 0x40u      // lands on a jump table
+#define RE_XRF_GLOBAL_SLOT 0x80u // pointer cell whose target is BSS/common
 
 typedef struct {
     uint64_t from; // the referencing instruction

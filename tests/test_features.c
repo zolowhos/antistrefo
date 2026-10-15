@@ -470,11 +470,11 @@ static void test_string_runs(void) {
     memset(wide, 0, sizeof(wide));
     memcpy(wide, "AAAA", 4);
     for (i = 0; i < 4; i++)
-        wide[6 + i * 2] = (uint8_t)"JUMP"[i];
+        wide[6 + i * 2] = (uint8_t) "JUMP"[i];
     for (i = 0; i < 5; i++)
-        wide[16 + i * 2] = (uint8_t)"HELLO"[i];
+        wide[16 + i * 2] = (uint8_t) "HELLO"[i];
     for (i = 0; i < 5; i++)
-        wide[28 + i * 2] = (uint8_t)"WORLD"[i];
+        wide[28 + i * 2] = (uint8_t) "WORLD"[i];
     re_str_around(re_span(wide, 38), 18, true, 4, 1, &a, &ar);
     RE_CHECK(ar.found);
     RE_CHECK(ar.run.wide);
