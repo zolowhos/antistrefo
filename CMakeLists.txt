@@ -5,7 +5,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(antistrefo
-    VERSION 0.1.0
+    VERSION 0.2.0
     DESCRIPTION "AI driven static analyzer for reverse engineering applications, libraries, or whatever you want"
     LANGUAGES C CXX)
 
