@@ -121,10 +121,13 @@ void re_mcp_db_sync_live(void) {
     slot = find_path(live);
     if (!slot) {
         re_mcp_db_t tmp;
-        (void)re_mcp_db_open(live, current_slot() == NULL, "gui", &tmp);
+        // Prefer the GUI-open file as status:current whenever it appears.
+        (void)re_mcp_db_open(live, true, "gui", &tmp);
         return;
     }
     snprintf(slot->backend, sizeof(slot->backend), "%s", "gui");
+    clear_current();
+    slot->current = true;
 }
 
 size_t re_mcp_db_list(re_mcp_db_t *dst, size_t cap) {

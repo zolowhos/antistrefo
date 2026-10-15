@@ -88,6 +88,13 @@ add_test(NAME xrefs_data
         -DWORK=${CMAKE_CURRENT_BINARY_DIR}/re_xrefs_fixture.sys
         -P ${CMAKE_CURRENT_SOURCE_DIR}/run_xrefs_data.cmake)
 
+add_test(NAME agent_feedback
+    COMMAND ${CMAKE_COMMAND}
+        -DANTISTREFO=$<TARGET_FILE:antistrefo>
+        -DEMITTER=$<TARGET_FILE:re_test_cfg>
+        -DWORK=${CMAKE_CURRENT_BINARY_DIR}/re_agent_feedback.sys
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/run_agent_feedback.cmake)
+
 # The control flow suite is separate because a graph that collapses to one block is
 # the kind of regression that every other suite happily passes, so it gets its own
 # binary and a hand assembled fixture whose every edge is known in advance.

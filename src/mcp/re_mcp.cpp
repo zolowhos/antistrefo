@@ -87,11 +87,22 @@ void send_result(Server *srv, re_arena_t *a, double id, re_strbuf_t *result) {
 void send_tool_result(Server *srv, re_arena_t *a, double id, re_strbuf_t *structured,
                       bool is_error) {
     re_strbuf_t b;
+    re_str_t prose = re_str(structured->p ? structured->p : "");
+    // Prefer object.text as the human-readable content when present.
+    {
+        re_jr_t root;
+        if (structured->p && structured->len &&
+            re_jr_parse(a, structured->p, structured->len, &root) && root.kind == RE_JR_OBJ) {
+            re_str_t t = re_jr_str(re_jr_get(&root, "text"), "");
+            if (t.n)
+                prose = t;
+        }
+    }
     re_strbuf_init(&b, a);
     re_strbuf_puts(&b, "{\"jsonrpc\":\"2.0\",\"id\":");
     re_strbuf_appendf(&b, "%lld", (long long)id);
     re_strbuf_puts(&b, ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":");
-    re_jr_escape(&b, re_str(structured->p ? structured->p : ""));
+    re_jr_escape(&b, prose);
     re_strbuf_puts(&b, "}],\"structuredContent\":");
     re_strbuf_append(&b, structured->p ? structured->p : "{}", structured->len);
     if (is_error)
@@ -123,6 +134,8 @@ static void handle_tools_call(Server *s, re_arena_t *a, double id, const re_jr_t
     re_strbuf_t out;
     re_strbuf_init(&out, a);
     bool is_error = false;
+    // Refresh GUI current on every tool dispatch so list_databases/status stay live.
+    re_mcp_db_sync_live();
     if (!cmd || !cmd->mcp || !cmd->fn) {
         mcp_tool_error(&out, "no such tool", &is_error);
         send_tool_result(s, a, id, &out, is_error);
@@ -137,14 +150,15 @@ static void handle_tools_call(Server *s, re_arena_t *a, double id, const re_jr_t
     if (args) {
         re_str_t direct = re_jr_str(re_jr_get(args, "path"), "");
         re_str_t iid = re_jr_str(re_jr_get(args, "instance_id"), "");
-        if (direct.n)
-            path = re_arena_strdup(a, direct.p);
-        else if (iid.n) {
+        // Honor instance_id when passed; otherwise fall through to GUI/current.
+        if (iid.n) {
             const char *inst = re_arena_strndup(a, iid.p, iid.n);
             const char *p = re_mcp_db_path(inst);
             if (p)
                 path = re_arena_strdup(a, p);
         }
+        if (!path && direct.n)
+            path = re_arena_strdup(a, direct.p);
     }
     if (!path) {
         const char *live = re_mcp_live_path();

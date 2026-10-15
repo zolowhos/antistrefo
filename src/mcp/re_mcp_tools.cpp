@@ -78,6 +78,8 @@ const ToolSpec kToolArgs[] = {
      {{"address", NULL, "VA or RVA", false}, kEnd, kEnd, kEnd}},
     {"list_strings_filter",
      {{"filter", "--regex", "regex filter for strings", false}, kEnd, kEnd, kEnd}},
+    {"list_strings",
+     {{"pattern", "--pattern", "literal substring filter (not regex)", false}, kEnd, kEnd, kEnd}},
     {"list_globals_filter",
      {{"filter", "--regex", "regex filter for exports", false}, kEnd, kEnd, kEnd}},
 };
@@ -140,13 +142,14 @@ bool schema_ida(const char *name, re_strbuf_t *b) {
                        "\"op\":{\"type\":\"string\",\"description\":"
                        "\"Native analysis op (funcs, disasm, decompile, xrefs, strings, ...).\"},"
                        "\"addr\":{\"type\":\"string\",\"description\":"
-                       "\"Address or pattern argument for the op.\"},"
+                       "\"Address (VA or RVA) or search pattern (text:/imm:/raw:/sym:).\"},"
                        "\"pattern\":{\"type\":\"string\",\"description\":"
-                       "\"Alias of addr for search.\"},"
+                       "\"Alias of addr for search, or literal filter for strings.\"},"
                        "\"len\":{\"type\":\"integer\"},"
                        "\"off\":{\"type\":\"integer\"},"
                        "\"rva\":{\"type\":\"integer\"},"
-                       "\"regex\":{\"type\":\"string\"},"
+                       "\"regex\":{\"type\":\"string\",\"description\":"
+                       "\"Regex filter (strings). Prefer pattern for literal substring.\"},"
                        "\"instance_id\":{\"description\":\"Optional database instance id.\"},"
                        "\"limit\":{\"type\":\"integer\"},"
                        "\"offset\":{\"type\":\"integer\"},"
@@ -269,6 +272,19 @@ int build_argv_ida(const re_cmd_t *cmd, const re_jr_t *args, re_arena_t *a, char
     return -1;
 }
 
+static int push_str_flag(const re_jr_t *args, re_arena_t *a, char **argv, int argc, const char *key,
+                         char *flag) {
+    re_str_t v;
+    if (!re_jr_has(args, key))
+        return argc;
+    v = re_jr_str(re_jr_get(args, key), "");
+    if (!v.n)
+        return argc;
+    argv[argc++] = flag;
+    argv[argc++] = re_arena_strndup(a, v.p, v.n);
+    return argc;
+}
+
 static int append_query_flags(const re_jr_t *args, re_arena_t *a, char **argv, int argc,
                               char (*tok)[24], int *ntok) {
     if (re_jr_has(args, "len")) {
@@ -283,48 +299,32 @@ static int append_query_flags(const re_jr_t *args, re_arena_t *a, char **argv, i
         argv[argc++] = const_cast<char *>("--rva");
         argv[argc++] = num_tok(tok, ntok, re_jr_i64(re_jr_get(args, "rva"), 0));
     }
-    if (re_jr_has(args, "regex")) {
-        re_str_t r = re_jr_str(re_jr_get(args, "regex"), "");
-        argv[argc++] = const_cast<char *>("--regex");
-        argv[argc++] = r.n ? re_arena_strndup(a, r.p, r.n) : const_cast<char *>("");
+    argc = push_str_flag(args, a, argv, argc, "regex", const_cast<char *>("--regex"));
+    if (re_jr_has(args, "pattern")) {
+        re_str_t op = re_jr_str(re_jr_get(args, "op"), "");
+        if (re_str_eq_cstr(op, "strings"))
+            argc = push_str_flag(args, a, argv, argc, "pattern", const_cast<char *>("--pattern"));
     }
-    int64_t limit = re_jr_i64(re_jr_get(args, "limit"), -1);
-    if (limit > 0) {
-        argv[argc++] = const_cast<char *>("--limit");
-        argv[argc++] = num_tok(tok, ntok, limit);
-    }
-    int64_t offset = re_jr_i64(re_jr_get(args, "offset"), -1);
-    if (offset >= 0) {
-        argv[argc++] = const_cast<char *>("--offset");
-        argv[argc++] = num_tok(tok, ntok, offset);
-    }
-    int64_t context = re_jr_i64(re_jr_get(args, "context"), -1);
-    if (context > 0) {
-        argv[argc++] = const_cast<char *>("--context");
-        argv[argc++] = num_tok(tok, ntok, context);
-    }
-    if (re_jr_has(args, "exports")) {
-        re_str_t v = re_jr_str(re_jr_get(args, "exports"), "");
-        if (v.n) {
-            argv[argc++] = const_cast<char *>("--exports");
-            argv[argc++] = re_arena_strndup(a, v.p, v.n);
+    {
+        int64_t limit = re_jr_i64(re_jr_get(args, "limit"), -1);
+        if (limit > 0) {
+            argv[argc++] = const_cast<char *>("--limit");
+            argv[argc++] = num_tok(tok, ntok, limit);
+        }
+        int64_t offset = re_jr_i64(re_jr_get(args, "offset"), -1);
+        if (offset >= 0) {
+            argv[argc++] = const_cast<char *>("--offset");
+            argv[argc++] = num_tok(tok, ntok, offset);
+        }
+        int64_t context = re_jr_i64(re_jr_get(args, "context"), -1);
+        if (context > 0) {
+            argv[argc++] = const_cast<char *>("--context");
+            argv[argc++] = num_tok(tok, ntok, context);
         }
     }
-    if (re_jr_has(args, "names")) {
-        re_str_t v = re_jr_str(re_jr_get(args, "names"), "");
-        if (v.n) {
-            argv[argc++] = const_cast<char *>("--names");
-            argv[argc++] = re_arena_strndup(a, v.p, v.n);
-        }
-    }
-    if (re_jr_has(args, "order")) {
-        re_str_t v = re_jr_str(re_jr_get(args, "order"), "");
-        if (v.n) {
-            argv[argc++] = const_cast<char *>("--order");
-            argv[argc++] = re_arena_strndup(a, v.p, v.n);
-        }
-    }
-    return argc;
+    argc = push_str_flag(args, a, argv, argc, "exports", const_cast<char *>("--exports"));
+    argc = push_str_flag(args, a, argv, argc, "names", const_cast<char *>("--names"));
+    return push_str_flag(args, a, argv, argc, "order", const_cast<char *>("--order"));
 }
 
 int append_positionals(const ToolSpec *spec, const re_jr_t *args, re_arena_t *a, char **argv,

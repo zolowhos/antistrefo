@@ -52,6 +52,22 @@ size_t re_prep_names(re_ctx_t *ctx, const char *path, const char *sigfile, re_co
 // guessing by magnitude does not work: a driver mapped at 0x10000 has virtual
 // addresses around 0x11000, which are just as small as the RVAs.
 bool re_parse_addr(re_ctx_t *ctx, re_str_t s, const re_pe_t *pe, uint64_t *out);
+
+// True when s looks like 0x... or bare hex/decimal digits (not a sigfile path).
+bool re_str_looks_like_addr(re_str_t s);
+
+// Emit func_va / func_rva / func_size / func_end and unwind=true when set.
+void re_emit_func_bounds(re_jw_t *w, const re_func_t *f);
+
+// Walk from fn_va until an instruction covers at. Sets *insn_va; false on fail.
+bool re_snap_insn_va(re_code_t *code, uint64_t fn_va, uint64_t at, uint64_t *insn_va);
+
+// Decode and render at va into text/len. False when decode fails.
+bool re_render_insn_at(re_ctx_t *ctx, re_code_t *code, uint64_t va, re_str_t *text, uint32_t *len);
+
+// Prefer .pdata RUNTIME_FUNCTION begin when it covers at and recovered size disagrees.
+bool re_pick_func_at(re_ctx_t *ctx, const re_fscan_t *scan, const re_pe_t *pe, const char *pos,
+                     uint64_t *at_out, const re_func_t **out);
 #ifdef __cplusplus
 }
 #endif

@@ -96,10 +96,18 @@ endif()
 
 list(GET frames 4 ref_frame)
 string(JSON ref_text ERROR_VARIABLE json_error GET
-    "${ref_frame}" result structuredContent)
-# reference returns a JSON string in structuredContent
+    "${ref_frame}" result structuredContent text)
+# reference structuredContent is a JSON object with a text field
+if(NOT json_error STREQUAL "NOTFOUND")
+    message(FATAL_ERROR "reference structuredContent.text missing: ${json_error}")
+endif()
 if(NOT ref_text MATCHES "Decompile")
     message(FATAL_ERROR "reference should mention Decompile, got ${ref_text}")
+endif()
+string(JSON ref_content ERROR_VARIABLE json_error GET
+    "${ref_frame}" result content 0 text)
+if(NOT ref_content MATCHES "Decompile")
+    message(FATAL_ERROR "reference content text should be prose, got ${ref_content}")
 endif()
 
 list(GET frames 5 save_frame)

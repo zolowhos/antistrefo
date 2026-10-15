@@ -17,6 +17,7 @@ static char kFlagLen[] = "--len";
 static char kFlagOff[] = "--off";
 static char kFlagRva[] = "--rva";
 static char kFlagRegex[] = "--regex";
+static char kFlagPattern[] = "--pattern";
 static char kFlagLimit[] = "--limit";
 static char kFlagOffset[] = "--offset";
 static char kFlagContext[] = "--context";
@@ -92,9 +93,9 @@ static bool capture_cmd(const re_cmd_t *cmd, const char *path, char **argv, int 
 
 bool re_mcp_query_run(re_arena_t *a, const char *db_path, const char *op, const char *arg,
                       uint64_t len, uint64_t off, uint64_t rva, bool has_len, bool has_off,
-                      bool has_rva, const char *regex, size_t limit, size_t offset, size_t context,
-                      const char *exports, const char *names, const char *order, re_strbuf_t *out,
-                      re_err_t *err) {
+                      bool has_rva, const char *regex, const char *pattern, size_t limit,
+                      size_t offset, size_t context, const char *exports, const char *names,
+                      const char *order, re_strbuf_t *out, re_err_t *err) {
     const re_cmd_t *cmd;
     char *argv[24];
     char tok[8][24];
@@ -130,6 +131,10 @@ bool re_mcp_query_run(re_arena_t *a, const char *db_path, const char *op, const 
         argv[argc++] = kFlagRegex;
         argv[argc++] = re_arena_strdup(a, regex);
     }
+    if (pattern && pattern[0]) {
+        argv[argc++] = kFlagPattern;
+        argv[argc++] = re_arena_strdup(a, pattern);
+    }
     if (limit)
         argc = push_u64(argv, argc, tok, &ntok, kFlagLimit, (uint64_t)limit);
     if (offset)
@@ -155,19 +160,33 @@ const char *re_mcp_query_reference(const char *query) {
         "  info triage sections imports exports strings funcs xrefs namerefs\n"
         "  disasm decompile cfg search hexdump regions jtables\n"
         "  entropy rules vtables analyze demangle\n"
-        "Args: op, optional addr/pattern, len, off, rva, regex, limit, offset, context,\n"
-        "  exports, names, order.\n"
+        "Args: op, optional addr/pattern, len, off, rva, regex, pattern, limit, offset,\n"
+        "  context, exports, names, order.\n"
+        "Addresses: VA if inside image-base window, else RVA (0x... or hex).\n"
         "Example: op=decompile addr=0x180001000\n"
-        "Example: op=strings regex=http context=4\n"
+        "Example: op=strings pattern=http  (literal) or regex=https?://\n"
+        "Example: op=search addr=imm:1E78  (also text: raw: sym:)\n"
+        "Unfiltered strings/search on large images need a filter per call.\n"
         "open_database first. save_database is unsupported.\n";
-    static const char kDecomp[] = "Decompile: execute_query op=decompile addr=<ea>\n"
-                                  "Returns Tier B C-like source in result.source.\n";
-    static const char kXref[] = "Xrefs: execute_query op=xrefs addr=<ea>\n";
+    static const char kDecomp[] =
+        "Decompile: execute_query op=decompile addr=<ea>\n"
+        "Returns Tier B C-like source, at/func_va/func_end, displacements[].\n"
+        ".pdata begin wins when recovered size disagrees.\n";
+    static const char kXref[] =
+        "Xrefs: execute_query op=xrefs addr=<ea>\n"
+        "called_from kept for compat; each hit has kind (call/jump/cond/data)\n"
+        "and from_text/from_len for the referring instruction.\n";
     static const char kStr[] =
-        "Strings: execute_query op=strings [regex=<filter>] [context=N]\n"
-        "context adds that many neighboring strings on each side of a hit.\n";
-    static const char kSearch[] = "Search: execute_query op=search addr=text:<pat> [context=N]\n"
-                                  "Text hits include run, the full string around the match.\n";
+        "Strings: pattern=<literal substring> or regex=<filter> [context=N]\n"
+        "pattern is literal (not regex). Unfiltered scans are huge; narrow them.\n"
+        "context adds neighboring strings on each side of a hit.\n";
+    static const char kSearch[] =
+        "Search: addr=text:<pat> | imm:<hex> | raw:<hexpairs> | sym:<name>\n"
+        "Bare hex pairs are raw bytes (raw: alias). Hits include va/rva;\n"
+        "executable hits also include insn_va and insn_text.\n";
+    static const char kDisasm[] =
+        "Disasm: op=disasm addr=<ea>. Emits func_va/func_rva/func_size/func_end\n"
+        "and unwind when known. Mid-instruction addresses snap to insn_va.\n";
     static const char kName[] = "Namerefs: execute_query op=namerefs exports=<provider>\n"
                                 "  or names=<file> [order=<file>]\n"
                                 "RIP-relative loads of those exact names, in instruction order.\n";
@@ -183,6 +202,8 @@ const char *re_mcp_query_reference(const char *query) {
             return kStr;
         if (re_str_find_cstr(q, "search", 0) >= 0)
             return kSearch;
+        if (re_str_find_cstr(q, "disasm", 0) >= 0)
+            return kDisasm;
         if (re_str_find_cstr(q, "nameref", 0) >= 0)
             return kName;
     }

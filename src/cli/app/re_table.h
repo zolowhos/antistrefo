@@ -38,6 +38,8 @@ typedef struct re_ctx {
     uint64_t len;   // hexdump length
     re_str_t regex; // empty when no filter was given
     bool has_regex;
+    re_str_t pattern; // literal substring filter (strings); empty when unused
+    bool has_pattern;
     re_str_t exports_path; // namerefs provider image, empty when unused
     re_str_t names_path;   // namerefs name list, empty when unused
     re_str_t order_path;   // namerefs canonical order, empty when unused

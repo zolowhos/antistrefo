@@ -216,7 +216,8 @@ int re_cmd_execute_query(re_ctx_t *ctx, const char *path, int argc, char **argv)
     re_strbuf_init(&out, ctx->arena);
     err.code = RE_OK;
     ok = re_mcp_query_run(ctx->arena, db_path, op, arg, ctx->len, ctx->off, ctx->off, has_len,
-                          has_off && !has_rva, has_rva, regex, ctx->limit, ctx->offset,
+                          has_off && !has_rva, has_rva, regex,
+                          ctx->has_pattern ? ctx->pattern.p : NULL, ctx->limit, ctx->offset,
                           ctx->context, ctx->exports_path.n ? ctx->exports_path.p : NULL,
                           ctx->names_path.n ? ctx->names_path.p : NULL,
                           ctx->order_path.n ? ctx->order_path.p : NULL, &out, &err);
@@ -233,19 +234,13 @@ int re_cmd_execute_query(re_ctx_t *ctx, const char *path, int argc, char **argv)
 int re_cmd_reference(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     const char *query;
     const char *text;
-    re_strbuf_t b;
     int first = 0;
     (void)path;
     if (!re_cmd_parse(ctx, argc, argv, &first, ctx->err))
         return 2;
     query = re_cmd_positional(argc, argv, first);
     text = re_mcp_query_reference(query);
-    if (ctx->ida_shape) {
-        re_strbuf_init(&b, ctx->arena);
-        re_jr_escape(&b, re_str(text));
-        write_raw(ctx, b.p, b.len);
-        return 0;
-    }
+    // structuredContent must be a JSON object, never a bare string.
     {
         re_jw_t w;
         begin_obj(ctx, &w, "reference");

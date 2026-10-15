@@ -12,6 +12,7 @@
 #include "utils/mem/re_buf.h"
 #include "utils/mem/re_vec.h"
 #include "utils/text/re_str.h"
+#include "utils/text/re_strbuf.h"
 #include "utils/text/re_text.h"
 #include "cli/app/re_table.h"
 #include "cli/cmds/re_prep.h"
@@ -90,12 +91,32 @@ static void strings_text(re_ctx_t *ctx, const re_pe_t *pe, const re_vec_t *hits)
     fputs(sb.p ? sb.p : "", stdout);
 }
 
-static re_rx_t *compile_rx(re_ctx_t *ctx) {
+// Escape regex metacharacters so --pattern is a literal substring filter.
+static char *escape_literal(re_arena_t *a, re_str_t s) {
+    re_strbuf_t b;
+    size_t i;
+    re_strbuf_init(&b, a);
+    for (i = 0; i < s.n; i++) {
+        char c = s.p[i];
+        if (c == '\\' || c == '.' || c == '*' || c == '+' || c == '?' || c == '(' || c == ')' ||
+            c == '[' || c == ']' || c == '{' || c == '}' || c == '|' || c == '^' || c == '$')
+            re_strbuf_putc(&b, '\\');
+        re_strbuf_putc(&b, c);
+    }
+    return re_arena_strndup(a, b.p ? b.p : "", b.len);
+}
+
+static re_rx_t *compile_filter(re_ctx_t *ctx) {
     char *pat;
-    if (!ctx->has_regex)
-        return NULL;
-    pat = re_arena_strndup(ctx->arena, ctx->regex.p, ctx->regex.n);
-    return re_rx_compile(ctx->arena, pat, "i", ctx->err);
+    if (ctx->has_regex) {
+        pat = re_arena_strndup(ctx->arena, ctx->regex.p, ctx->regex.n);
+        return re_rx_compile(ctx->arena, pat, "i", ctx->err);
+    }
+    if (ctx->has_pattern) {
+        pat = escape_literal(ctx->arena, ctx->pattern);
+        return re_rx_compile(ctx->arena, pat ? pat : "", "i", ctx->err);
+    }
+    return NULL;
 }
 
 int re_cmd_strings(re_ctx_t *ctx, const char *path, int argc, char **argv) {
@@ -106,6 +127,7 @@ int re_cmd_strings(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_err_code_t e;
     re_jw_t w;
     size_t i;
+    bool filtered;
     (void)argc;
     (void)argv;
     e = re_file_open(path, ctx->arena, &f);
@@ -115,8 +137,9 @@ int re_cmd_strings(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     }
     memset(&pe, 0, sizeof(pe));
     (void)re_pe_parse(f.whole, ctx->arena, &pe);
-    rx = compile_rx(ctx);
-    if (ctx->has_regex && !rx) {
+    filtered = ctx->has_regex || ctx->has_pattern;
+    rx = compile_filter(ctx);
+    if (filtered && !rx) {
         re_file_close(&f);
         return re_err_exit_code(ctx->err->code);
     }
@@ -128,6 +151,17 @@ int re_cmd_strings(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     }
     re_jw_init(&w, ctx->arena);
     re_envelope(&w, "strings", f.whole, &pe);
+    // Unfiltered huge scans: do not imply the first page is "the matches".
+    if (!filtered && page.total > ctx->limit) {
+        re_jw_kcstr(&w, "message",
+                    "unfiltered string scan is huge; narrow with --pattern (literal) or "
+                    "--regex, or page with --offset/--limit");
+        re_jw_kbool(&w, "needs_filter", true);
+    }
+    if (ctx->has_pattern)
+        re_jw_kstr(&w, "pattern", ctx->pattern);
+    if (ctx->has_regex)
+        re_jw_kstr(&w, "regex", ctx->regex);
     re_jw_ku64(&w, "total", page.total);
     re_jw_ku64(&w, "count", RE_VEC_LEN(&page.hits));
     re_jw_kbool(&w, "truncated", page.truncated);
