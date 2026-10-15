@@ -16,7 +16,7 @@ extern "C" {
 #include "utils/text/re_str.h"
 #include "utils/text/re_strbuf.h"
 
-#define RE_CMD_NAME_MAX 24
+#define RE_CMD_NAME_MAX 48
 #define RE_CMD_SUMMARY_MAX 96
 #define RE_CMD_MAX_ARGS 16
 

@@ -139,6 +139,15 @@ add_test(NAME mcp_ida_shapes
         -DEMITTER=$<TARGET_FILE:re_test_cfg>
         -P ${CMAKE_CURRENT_SOURCE_DIR}/run_mcp_ida_shapes.cmake)
 
+# Discrete ida-pro-mcp Tier A content + Tier B unsupported stub.
+add_test(NAME mcp_ida_discrete
+    COMMAND ${CMAKE_COMMAND}
+        -DANTISTREFO=$<TARGET_FILE:antistrefo>
+        -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/mcp_ida_discrete.jsonl
+        -DFIXTURE=${CMAKE_CURRENT_BINARY_DIR}/mcp_ida_discrete_fixture.sys
+        -DEMITTER=$<TARGET_FILE:re_test_cfg>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/run_mcp_ida_discrete.cmake)
+
 # GUI load console line and the live context snapshot MCP agents read.
 add_executable(re_test_mcp_live test_mcp_live.c
     ${CMAKE_SOURCE_DIR}/src/mcp/re_mcp_live.c)
