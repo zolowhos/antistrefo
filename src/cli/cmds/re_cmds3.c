@@ -113,9 +113,53 @@ static void emit_func(re_ctx_t *ctx, re_code_t *code, re_jw_t *w, const re_func_
     re_jw_obj_end(w);
 }
 
+static void emit_one_func(re_ctx_t *ctx, re_code_t *code, re_pe_t *pe, re_fscan_t *scan,
+                          re_xrefset_t *xs, re_span_t img, uint64_t at, const re_func_t *one) {
+    re_jw_t w;
+    re_jw_init(&w, ctx->arena);
+    re_envelope(&w, "funcs", img, pe);
+    re_jw_khex(&w, "at", at, 16);
+    re_jw_key(&w, "functions");
+    re_jw_arr(&w);
+    emit_func(ctx, code, &w, one, re_func_edge_count(scan, one), xs, pe);
+    re_jw_arr_end(&w);
+    re_jw_ku64(&w, "total", 1);
+    re_jw_kbool(&w, "truncated", false);
+    re_jw_obj_end(&w);
+    re_jw_flush(&w, re_ctx_out(ctx));
+}
+
+static void emit_func_page(re_ctx_t *ctx, re_code_t *code, re_pe_t *pe, re_fscan_t *scan,
+                           re_xrefset_t *xs, re_span_t img, const char *sigfile, size_t named,
+                           const re_flirt_load_stat_t *stat) {
+    re_jw_t w;
+    size_t shown = 0;
+    size_t total = RE_VEC_LEN(&scan->funcs);
+    re_jw_init(&w, ctx->arena);
+    re_envelope(&w, "funcs", img, pe);
+    re_jw_ku64(&w, "named", named);
+    re_jw_ku64(&w, "signatures", stat->before + stat->loaded);
+    if (sigfile) {
+        re_jw_kstr(&w, "signature_file", re_str(sigfile));
+        re_jw_ku64(&w, "signatures_loaded", stat->loaded);
+        if (stat->rejected)
+            re_jw_ku64(&w, "signatures_rejected", stat->rejected);
+    }
+    re_jw_key(&w, "functions");
+    re_jw_arr(&w);
+    for (size_t i = ctx->offset; i < total && shown < ctx->limit; i++, shown++) {
+        const re_func_t *fn = re_func_at(scan, i);
+        emit_func(ctx, code, &w, fn, re_func_edge_count(scan, fn), xs, pe);
+    }
+    re_jw_arr_end(&w);
+    re_jw_ku64(&w, "total", total);
+    re_jw_kbool(&w, "truncated", shown < total);
+    re_jw_ku64(&w, "edges", RE_VEC_LEN(&scan->edges));
+    re_jw_obj_end(&w);
+    re_jw_flush(&w, re_ctx_out(ctx));
+}
+
 int re_cmd_funcs(re_ctx_t *ctx, const char *path, int argc, char **argv) {
-    if (re_report_wanted(ctx))
-        return re_render_funcs(ctx, path);
     re_file_t f;
     re_pe_t pe;
     re_code_t code;
@@ -124,62 +168,27 @@ int re_cmd_funcs(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     const char *pos;
     const re_func_t *one = NULL;
     uint64_t at = 0;
+    re_flirt_load_stat_t stat;
+    size_t named;
+    if (re_report_wanted(ctx))
+        return re_render_funcs(ctx, path);
     if (!re_prepare(ctx, path, &f, &pe, &code))
         return re_err_exit_code(ctx->err->code);
     re_func_scan(&code, ctx->arena, &scan);
     re_xref_build(&code, &scan, &pe, ctx->arena, &xs);
     pos = re_cmd_positional(argc, argv, 1);
-    // Address form returns that one function; non-address strings stay sigfile paths.
     if (pos && re_str_looks_like_addr(re_str(pos))) {
         if (!re_pick_func_at(ctx, &scan, &pe, pos, &at, &one)) {
             re_file_close(&f);
             return re_err_exit_code(ctx->err->code);
         }
         re_prep_names(ctx, path, NULL, &code, &scan, NULL);
-        re_jw_t w;
-        re_jw_init(&w, ctx->arena);
-        re_envelope(&w, "funcs", f.whole, &pe);
-        re_jw_khex(&w, "at", at, 16);
-        re_jw_key(&w, "functions");
-        re_jw_arr(&w);
-        emit_func(ctx, &code, &w, one, re_func_edge_count(&scan, one), &xs, &pe);
-        re_jw_arr_end(&w);
-        re_jw_ku64(&w, "total", 1);
-        re_jw_kbool(&w, "truncated", false);
-        re_jw_obj_end(&w);
-        re_jw_flush(&w, re_ctx_out(ctx));
+        emit_one_func(ctx, &code, &pe, &scan, &xs, f.whole, at, one);
         re_file_close(&f);
         return 0;
     }
-    {
-        re_flirt_load_stat_t stat;
-        size_t named = re_prep_names(ctx, path, pos, &code, &scan, &stat);
-        re_jw_t w;
-        size_t shown = 0;
-        size_t total = RE_VEC_LEN(&scan.funcs);
-        re_jw_init(&w, ctx->arena);
-        re_envelope(&w, "funcs", f.whole, &pe);
-        re_jw_ku64(&w, "named", named);
-        re_jw_ku64(&w, "signatures", stat.before + stat.loaded);
-        if (pos) {
-            re_jw_kstr(&w, "signature_file", re_str(pos));
-            re_jw_ku64(&w, "signatures_loaded", stat.loaded);
-            if (stat.rejected)
-                re_jw_ku64(&w, "signatures_rejected", stat.rejected);
-        }
-        re_jw_key(&w, "functions");
-        re_jw_arr(&w);
-        for (size_t i = ctx->offset; i < total && shown < ctx->limit; i++, shown++) {
-            const re_func_t *fn = re_func_at(&scan, i);
-            emit_func(ctx, &code, &w, fn, re_func_edge_count(&scan, fn), &xs, &pe);
-        }
-        re_jw_arr_end(&w);
-        re_jw_ku64(&w, "total", total);
-        re_jw_kbool(&w, "truncated", shown < total);
-        re_jw_ku64(&w, "edges", RE_VEC_LEN(&scan.edges));
-        re_jw_obj_end(&w);
-        re_jw_flush(&w, re_ctx_out(ctx));
-    }
+    named = re_prep_names(ctx, path, pos, &code, &scan, &stat);
+    emit_func_page(ctx, &code, &pe, &scan, &xs, f.whole, pos, named, &stat);
     re_file_close(&f);
     return 0;
 }
@@ -275,20 +284,40 @@ static uint64_t subject_span(const re_fscan_t *scan, uint64_t subject, bool *is_
     return re_func_at(scan, (size_t)fi)->size;
 }
 
+static void emit_xref_body(re_ctx_t *ctx, re_code_t *code, re_jw_t *w, re_fscan_t *scan,
+                           re_xrefset_t *xs, uint64_t subject) {
+    re_vec_t into;
+    re_vec_t outof;
+    bool in_func = false;
+    uint64_t span = subject_span(scan, subject, &in_func);
+    long fi = re_func_index_of(scan, subject);
+    re_jw_khex(w, "subject", subject, 16);
+    re_jw_ku64(w, "subject_rva", subject - code->base);
+    if (in_func)
+        re_jw_ku64(w, "subject_func", (uint64_t)fi);
+    else
+        re_jw_kbool(w, "subject_data", true);
+    re_jw_ku64(w, "subject_span", span);
+    re_vec_init(&into, sizeof(uint32_t));
+    re_vec_init(&outof, sizeof(uint32_t));
+    re_xref_into(xs, ctx->arena, subject, span, 0, &into);
+    re_xref_out_of(xs, ctx->arena, subject, span, 0, &outof);
+    emit_side(ctx, code, w, xs, scan, "called_from", false, subject, span, &into);
+    emit_side(ctx, code, w, xs, scan, "refers_to", true, subject, span, &outof);
+    re_jw_ku64(w, "total", RE_VEC_LEN(&into) + RE_VEC_LEN(&outof));
+    re_jw_kbool(w, "truncated", false);
+}
+
 int re_cmd_xrefs(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_file_t f;
     re_pe_t pe;
     re_code_t code;
     re_fscan_t scan;
     re_xrefset_t xs;
-    re_vec_t into;
-    re_vec_t outof;
     uint64_t subject = 0;
-    uint64_t span = 0;
-    // argv[0] is the file, which main already passed as path, so an address is
-    // the second argument. With only the file there is nothing to look up.
     const char *pos = re_cmd_positional(argc, argv, 1);
     bool have = pos != NULL;
+    re_jw_t w;
     if (!re_prepare(ctx, path, &f, &pe, &code))
         return re_err_exit_code(ctx->err->code);
     re_func_scan(&code, ctx->arena, &scan);
@@ -297,7 +326,6 @@ int re_cmd_xrefs(re_ctx_t *ctx, const char *path, int argc, char **argv) {
         re_file_close(&f);
         return re_err_exit_code(RE_E_USAGE);
     }
-    re_jw_t w;
     re_jw_init(&w, ctx->arena);
     re_envelope(&w, "xrefs", f.whole, &pe);
     re_jw_ku64(&w, "refs", RE_VEC_LEN(&xs.fwd));
@@ -305,32 +333,9 @@ int re_cmd_xrefs(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     if (!have) {
         re_jw_ku64(&w, "total", RE_VEC_LEN(&xs.fwd));
         re_jw_kbool(&w, "truncated", false);
-        re_jw_obj_end(&w);
-        re_jw_flush(&w, re_ctx_out(ctx));
-        re_file_close(&f);
-        return 0;
+    } else {
+        emit_xref_body(ctx, &code, &w, &scan, &xs, subject);
     }
-    long fi = re_func_index_of(&scan, subject);
-    re_jw_khex(&w, "subject", subject, 16);
-    re_jw_ku64(&w, "subject_rva", subject - code.base);
-    {
-        bool in_func = false;
-        span = subject_span(&scan, subject, &in_func);
-        if (in_func)
-            re_jw_ku64(&w, "subject_func", (uint64_t)fi);
-        else
-            re_jw_kbool(&w, "subject_data", true);
-    }
-    re_jw_ku64(&w, "subject_span", span);
-    re_vec_init(&into, sizeof(uint32_t));
-    re_vec_init(&outof, sizeof(uint32_t));
-    re_xref_into(&xs, ctx->arena, subject, span, 0, &into);
-    re_xref_out_of(&xs, ctx->arena, subject, span, 0, &outof);
-    // called_from kept for compat; kind=data marks LEA/string refs (not calls).
-    emit_side(ctx, &code, &w, &xs, &scan, "called_from", false, subject, span, &into);
-    emit_side(ctx, &code, &w, &xs, &scan, "refers_to", true, subject, span, &outof);
-    re_jw_ku64(&w, "total", RE_VEC_LEN(&into) + RE_VEC_LEN(&outof));
-    re_jw_kbool(&w, "truncated", false);
     re_jw_obj_end(&w);
     re_jw_flush(&w, re_ctx_out(ctx));
     re_file_close(&f);
@@ -380,8 +385,25 @@ static void emit_insn(re_ctx_t *ctx, re_code_t *code, re_strbuf_t *line, re_jw_t
     re_jw_obj_end(w);
 }
 
-// Disassemble from an address, or the entry point when none is given. The listing
-// covers one function so a stray data byte cannot masquerade as an instruction.
+static void disasm_bind(re_ctx_t *ctx, re_code_t *code, re_fscan_t *scan, uint64_t asked,
+                        uint64_t *at, uint64_t *span, uint64_t *insn_va, const re_func_t **fn,
+                        long *fi) {
+    *at = asked;
+    *insn_va = 0;
+    *fn = NULL;
+    *fi = re_func_index_of(scan, asked);
+    if (*fi < 0)
+        return;
+    *fn = re_func_at(scan, (size_t)*fi);
+    if (*fn && re_snap_insn_va(code, (*fn)->va, asked, insn_va))
+        *at = *insn_va;
+    if (!ctx->len) {
+        *span = (*fn)->size - (*at - (*fn)->va);
+        if (*span > 512)
+            *span = 512;
+    }
+}
+
 int re_cmd_disasm(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_file_t f;
     re_pe_t pe;
@@ -389,12 +411,10 @@ int re_cmd_disasm(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_fscan_t scan;
     re_strbuf_t line;
     const re_func_t *fn = NULL;
-    uint64_t asked = 0;
-    uint64_t at = 0;
-    uint64_t span = 256;
-    uint64_t insn_va = 0;
+    uint64_t asked = 0, at = 0, span = 256, insn_va = 0;
     size_t shown = 0;
     long fi = -1;
+    re_jw_t w;
     if (!re_prepare(ctx, path, &f, &pe, &code))
         return re_err_exit_code(ctx->err->code);
     re_func_scan(&code, ctx->arena, &scan);
@@ -402,20 +422,8 @@ int re_cmd_disasm(re_ctx_t *ctx, const char *path, int argc, char **argv) {
         re_file_close(&f);
         return re_err_exit_code(ctx->err->code);
     }
-    at = asked;
-    fi = re_func_index_of(&scan, at);
-    if (fi >= 0) {
-        fn = re_func_at(&scan, (size_t)fi);
-        if (fn && re_snap_insn_va(&code, fn->va, asked, &insn_va))
-            at = insn_va;
-        if (!ctx->len) {
-            span = fn->size - (at - fn->va);
-            if (span > 512)
-                span = 512;
-        }
-    }
+    disasm_bind(ctx, &code, &scan, asked, &at, &span, &insn_va, &fn, &fi);
     re_strbuf_init(&line, ctx->arena);
-    re_jw_t w;
     re_jw_init(&w, ctx->arena);
     re_envelope(&w, "disasm", f.whole, &pe);
     re_jw_khex(&w, "at", asked, 16);

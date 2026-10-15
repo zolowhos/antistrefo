@@ -236,9 +236,9 @@ static bool takes_value(re_str_t a) {
     return re_str_eq_cstr(a, "--format") || re_str_eq_cstr(a, "--regex") ||
            re_str_eq_cstr(a, "--pattern") || re_str_eq_cstr(a, "--limit") ||
            re_str_eq_cstr(a, "--offset") || re_str_eq_cstr(a, "--context") ||
-           re_str_eq_cstr(a, "--off") || re_str_eq_cstr(a, "--rva") ||
-           re_str_eq_cstr(a, "--len") || re_str_eq_cstr(a, "--exports") ||
-           re_str_eq_cstr(a, "--names") || re_str_eq_cstr(a, "--order");
+           re_str_eq_cstr(a, "--off") || re_str_eq_cstr(a, "--rva") || re_str_eq_cstr(a, "--len") ||
+           re_str_eq_cstr(a, "--exports") || re_str_eq_cstr(a, "--names") ||
+           re_str_eq_cstr(a, "--order");
 }
 
 static const char *glued_value(re_str_t a) {

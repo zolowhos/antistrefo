@@ -130,7 +130,8 @@ static void emit_hits(re_ctx_t *ctx, re_span_t img, re_format_t fmt, const re_pe
         if (pe && pe->valid && re_pe_off2rva(pe, h->off, &rva)) {
             re_jw_ku64(&w, "rva", rva);
             re_jw_khex(&w, "va", pe->image_base + rva, 16);
-            if (code && insn_covering(code, pe->image_base + rva, &insn_va, &insn_text, ctx->arena)) {
+            if (code &&
+                insn_covering(code, pe->image_base + rva, &insn_va, &insn_text, ctx->arena)) {
                 re_jw_khex(&w, "insn_va", insn_va, 16);
                 re_jw_kstr(&w, "insn_text", insn_text);
             }
@@ -147,21 +148,51 @@ static void emit_hits(re_ctx_t *ctx, re_span_t img, re_format_t fmt, const re_pe
     re_jw_flush(&w, re_ctx_out(ctx));
 }
 
+static bool bind_search_code(re_span_t img, re_arena_t *a, re_pe_t *pe, re_code_t *code) {
+    const char *want;
+    const re_disasm_t *d;
+    memset(pe, 0, sizeof(*pe));
+    memset(code, 0, sizeof(*code));
+    if (re_pe_parse(img, a, pe) != RE_OK || !pe->valid)
+        return false;
+    want = re_disasm_for_machine(pe->machine);
+    d = want ? re_disasm_find(want) : NULL;
+    return re_code_init(code, img, pe, d, a);
+}
+
+static bool run_search(re_ctx_t *ctx, re_span_t img, re_search_kind_t *kind, re_str_t pat,
+                       re_search_t *s) {
+    uint8_t *by = NULL;
+    uint8_t *mk = NULL;
+    size_t n = 0;
+    if (*kind == RE_SEARCH_BYTES &&
+        !re_search_parse_pattern(ctx->arena, pat.p, &by, &mk, &n, ctx->err)) {
+        if (ctx->err->code != RE_E_USAGE)
+            return false;
+        *kind = RE_SEARCH_TEXT;
+        RE_ERR_OK(ctx->err);
+    }
+    if (*kind == RE_SEARCH_BYTES)
+        re_search_bytes(img, by, mk, n, ctx->offset, ctx->limit, ctx->arena, s);
+    else if (*kind == RE_SEARCH_IMMEDIATE)
+        return run_immediate(ctx, img, pat, s);
+    else if (*kind == RE_SEARCH_TEXT)
+        re_search_text(img, pat, false, true, false, ctx->offset, ctx->limit, ctx->arena, s);
+    else
+        re_search_signature(img, pat, ctx->offset, ctx->limit, ctx->arena, s);
+    return true;
+}
+
 int re_cmd_search(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     const char *pat_arg = re_cmd_positional(argc, argv, 1);
     re_file_t f;
     re_pe_t pe;
     re_code_t code;
     re_err_code_t e;
-    re_span_t img;
-    re_format_t fmt;
     re_str_t pat;
     re_search_kind_t kind;
     re_search_t s;
-    uint8_t *by = NULL;
-    uint8_t *mk = NULL;
-    size_t n = 0;
-    bool have_code = false;
+    bool have_code;
     if (!pat_arg) {
         RE_ERR_SET(ctx->err, RE_E_USAGE,
                    "search needs a pattern: text:<pat> imm:<hex> raw:<hex> sym:<name>");
@@ -172,39 +203,14 @@ int re_cmd_search(re_ctx_t *ctx, const char *path, int argc, char **argv) {
         RE_ERR_SETF(ctx->err, e, "cannot open %s", path);
         return re_err_exit_code(e);
     }
-    img = f.whole;
-    fmt = re_format_detect(img);
-    memset(&pe, 0, sizeof(pe));
-    memset(&code, 0, sizeof(code));
-    if (re_pe_parse(img, ctx->arena, &pe) == RE_OK && pe.valid) {
-        const char *want = re_disasm_for_machine(pe.machine);
-        const re_disasm_t *d = want ? re_disasm_find(want) : NULL;
-        have_code = re_code_init(&code, img, &pe, d, ctx->arena);
-    }
+    have_code = bind_search_code(f.whole, ctx->arena, &pe, &code);
     kind = search_kind(re_str(pat_arg), &pat);
     re_search_init(&s);
-    if (kind == RE_SEARCH_BYTES &&
-        !re_search_parse_pattern(ctx->arena, pat.p, &by, &mk, &n, ctx->err)) {
-        if (ctx->err->code != RE_E_USAGE) {
-            re_file_close(&f);
-            return re_err_exit_code(ctx->err->code);
-        }
-        kind = RE_SEARCH_TEXT;
-        RE_ERR_OK(ctx->err);
+    if (!run_search(ctx, f.whole, &kind, pat, &s)) {
+        re_file_close(&f);
+        return re_err_exit_code(ctx->err->code);
     }
-    if (kind == RE_SEARCH_BYTES) {
-        re_search_bytes(img, by, mk, n, ctx->offset, ctx->limit, ctx->arena, &s);
-    } else if (kind == RE_SEARCH_IMMEDIATE) {
-        if (!run_immediate(ctx, img, pat, &s)) {
-            re_file_close(&f);
-            return re_err_exit_code(ctx->err->code);
-        }
-    } else if (kind == RE_SEARCH_TEXT) {
-        re_search_text(img, pat, false, true, false, ctx->offset, ctx->limit, ctx->arena, &s);
-    } else {
-        re_search_signature(img, pat, ctx->offset, ctx->limit, ctx->arena, &s);
-    }
-    emit_hits(ctx, img, fmt, &pe, have_code ? &code : NULL, &s,
+    emit_hits(ctx, f.whole, re_format_detect(f.whole), &pe, have_code ? &code : NULL, &s,
               kind == RE_SEARCH_TEXT || kind == RE_SEARCH_SIGNATURE);
     re_file_close(&f);
     return 0;

@@ -104,6 +104,35 @@ static void write_disps(re_jw_t *w, const re_stack_t *st) {
     re_jw_arr_end(w);
 }
 
+static void write_decomp(re_ctx_t *ctx, re_span_t img, re_pe_t *pe, const re_func_t *fn,
+                         uint64_t at, const re_stack_t *st, bool ok, const re_strbuf_t *text,
+                         const re_names_stat_t *nm, re_vec_t *sites, re_xrefset_t *xs) {
+    re_jw_t w;
+    re_jw_init(&w, ctx->arena);
+    re_envelope(&w, "decompile", img, pe);
+    re_jw_khex(&w, "at", at, 16);
+    re_emit_func_bounds(&w, fn);
+    re_jw_khex(&w, "va", fn->va, 16);
+    re_jw_ku64(&w, "rva", fn->rva);
+    re_jw_ku64(&w, "size", fn->size);
+    re_jw_kcstr(&w, "cc", re_cc_name(st->cc));
+    re_jw_ku64(&w, "params", st->n_params);
+    re_jw_ku64(&w, "locals", st->n_locals);
+    write_disps(&w, st);
+    re_jw_kbool(&w, "ok", ok);
+    if (fn->name.n)
+        re_jw_kstr(&w, "name", fn->name);
+    re_jw_ku64(&w, "vtable_slots_named", nm->n_slots);
+    re_jw_ku64(&w, "virtual_calls", nm->n_vcalls);
+    re_jw_ku64(&w, "eh_scopes", nm->n_scopes);
+    re_jw_kstr(&w, "source", re_str(text->p ? text->p : ""));
+    write_map(&w, sites, xs);
+    write_refs(&w, "callers", xs, ctx->arena, fn->va, fn->size, true);
+    write_refs(&w, "callees", xs, ctx->arena, fn->va, fn->size, false);
+    re_jw_obj_end(&w);
+    re_jw_flush(&w, re_ctx_out(ctx));
+}
+
 int re_cmd_decompile(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_file_t f;
     re_pe_t pe;
@@ -113,8 +142,12 @@ int re_cmd_decompile(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_decomp_t d;
     re_stack_t st;
     re_strbuf_t text;
+    re_names_stat_t nm;
+    re_vec_t tables;
+    re_vec_t sites;
     const re_func_t *fn = NULL;
     uint64_t at = 0;
+    bool ok;
     if (!re_prepare(ctx, path, &f, &pe, &code))
         return re_err_exit_code(ctx->err->code);
     re_func_scan(&code, ctx->arena, &scan);
@@ -123,14 +156,11 @@ int re_cmd_decompile(re_ctx_t *ctx, const char *path, int argc, char **argv) {
         re_file_close(&f);
         return re_err_exit_code(ctx->err->code);
     }
-    re_names_stat_t nm;
     build_xrefs_and_names(ctx, &pe, &code, &scan, &xs, &nm);
-    re_vec_t tables;
     re_stack_analyze(&code, fn, ctx->arena, &st);
     re_stack_apply_image(&st, &pe);
     re_vec_init(&tables, sizeof(re_jtable_t));
     re_jtable_scan(&code, &scan, ctx->arena, &tables);
-    re_vec_t sites;
     re_vec_init(&sites, sizeof(re_dc_site_t));
     d.code = &code;
     d.jtables = &tables;
@@ -138,33 +168,10 @@ int re_cmd_decompile(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     d.arena = ctx->arena;
     d.sites = &sites;
     re_strbuf_init(&text, ctx->arena);
-    bool ok = re_decompile_ok(&d, fn);
+    ok = re_decompile_ok(&d, fn);
     if (ok)
         re_decompile_func(&d, fn, &st, &text);
-    re_jw_t w;
-    re_jw_init(&w, ctx->arena);
-    re_envelope(&w, "decompile", f.whole, &pe);
-    re_jw_khex(&w, "at", at, 16);
-    re_emit_func_bounds(&w, fn);
-    re_jw_khex(&w, "va", fn->va, 16);
-    re_jw_ku64(&w, "rva", fn->rva);
-    re_jw_ku64(&w, "size", fn->size);
-    re_jw_kcstr(&w, "cc", re_cc_name(st.cc));
-    re_jw_ku64(&w, "params", st.n_params);
-    re_jw_ku64(&w, "locals", st.n_locals);
-    write_disps(&w, &st);
-    re_jw_kbool(&w, "ok", ok);
-    if (fn->name.n)
-        re_jw_kstr(&w, "name", fn->name);
-    re_jw_ku64(&w, "vtable_slots_named", nm.n_slots);
-    re_jw_ku64(&w, "virtual_calls", nm.n_vcalls);
-    re_jw_ku64(&w, "eh_scopes", nm.n_scopes);
-    re_jw_kstr(&w, "source", re_str(text.p ? text.p : ""));
-    write_map(&w, &sites, &xs);
-    write_refs(&w, "callers", &xs, ctx->arena, fn->va, fn->size, true);
-    write_refs(&w, "callees", &xs, ctx->arena, fn->va, fn->size, false);
-    re_jw_obj_end(&w);
-    re_jw_flush(&w, re_ctx_out(ctx));
+    write_decomp(ctx, f.whole, &pe, fn, at, &st, ok, &text, &nm, &sites, &xs);
     re_file_close(&f);
     return 0;
 }

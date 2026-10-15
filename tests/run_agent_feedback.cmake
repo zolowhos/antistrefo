@@ -11,9 +11,10 @@ if(NOT wrote EQUAL 0)
     message(FATAL_ERROR "could not write the fixture: ${wrote}")
 endif()
 
-# Fixture text starts at IMAGE_BASE+0x1000 = 0x180001000. Mid-insn: +1 into cmp.
+# Fixture text starts at IMAGE_BASE+0x1000. JSON hex is zero-padded to 16 digits.
 set(fn_va "0x180001000")
 set(mid_va "0x180001001")
+set(fn_hex "0x0000000180001000")
 
 execute_process(
     COMMAND "${ANTISTREFO}" disasm "${WORK}" "${mid_va}"
@@ -21,7 +22,7 @@ execute_process(
 if(NOT rc EQUAL 0)
     message(FATAL_ERROR "disasm failed: ${rc}: ${dis_out}")
 endif()
-if(NOT dis_out MATCHES "\"func_va\":\"0x180001000\"")
+if(NOT dis_out MATCHES "\"func_va\":\"${fn_hex}\"")
     message(FATAL_ERROR "disasm missing func_va: ${dis_out}")
 endif()
 if(NOT dis_out MATCHES "\"func_size\":")
@@ -33,7 +34,7 @@ endif()
 if(NOT dis_out MATCHES "\"mid_insn\":true")
     message(FATAL_ERROR "disasm mid-insn snap missing: ${dis_out}")
 endif()
-if(NOT dis_out MATCHES "\"insn_va\":\"0x180001000\"")
+if(NOT dis_out MATCHES "\"insn_va\":\"${fn_hex}\"")
     message(FATAL_ERROR "disasm insn_va should snap to function start: ${dis_out}")
 endif()
 
@@ -56,22 +57,22 @@ execute_process(
 if(NOT rc EQUAL 0)
     message(FATAL_ERROR "decompile failed: ${rc}: ${dc_out}")
 endif()
-if(NOT dc_out MATCHES "\"at\":\"0x180001000\"")
+if(NOT dc_out MATCHES "\"at\":\"${fn_hex}\"")
     message(FATAL_ERROR "decompile missing at: ${dc_out}")
 endif()
-if(NOT dc_out MATCHES "\"func_va\":\"0x180001000\"")
+if(NOT dc_out MATCHES "\"func_va\":\"${fn_hex}\"")
     message(FATAL_ERROR "decompile missing func_va: ${dc_out}")
 endif()
 if(NOT dc_out MATCHES "\"displacements\"")
     message(FATAL_ERROR "decompile missing displacements: ${dc_out}")
 endif()
 
-# imm:01 matches the cmp immediate and the mov eax,1 / mov eax,2 immediates in .text.
+# raw: of "cmp rax,1" prologue in .text (file offset in section => va/rva + insn).
 execute_process(
-    COMMAND "${ANTISTREFO}" search "${WORK}" "imm:01" --limit 5
+    COMMAND "${ANTISTREFO}" search "${WORK}" "raw:4883f801" --limit 5
     OUTPUT_VARIABLE search_out RESULT_VARIABLE rc)
 if(NOT rc EQUAL 0)
-    message(FATAL_ERROR "search imm failed: ${rc}: ${search_out}")
+    message(FATAL_ERROR "search raw failed: ${rc}: ${search_out}")
 endif()
 if(NOT search_out MATCHES "\"va\":")
     message(FATAL_ERROR "search hits need va: ${search_out}")
@@ -81,6 +82,17 @@ if(NOT search_out MATCHES "\"rva\":")
 endif()
 if(NOT search_out MATCHES "\"insn_text\"")
     message(FATAL_ERROR "search executable hits need insn_text: ${search_out}")
+endif()
+
+# imm: of the 4-byte immediate in "mov eax,1" (b8 01 00 00 00) inside .text.
+execute_process(
+    COMMAND "${ANTISTREFO}" search "${WORK}" "imm:00000001" --limit 5
+    OUTPUT_VARIABLE imm_out RESULT_VARIABLE rc)
+if(NOT rc EQUAL 0)
+    message(FATAL_ERROR "search imm failed: ${rc}: ${imm_out}")
+endif()
+if(NOT imm_out MATCHES "\"insn_text\"")
+    message(FATAL_ERROR "search imm: hits in code need insn_text: ${imm_out}")
 endif()
 
 execute_process(

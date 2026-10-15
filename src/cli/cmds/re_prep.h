@@ -63,8 +63,7 @@ void re_emit_func_bounds(re_jw_t *w, const re_func_t *f);
 bool re_snap_insn_va(re_code_t *code, uint64_t fn_va, uint64_t at, uint64_t *insn_va);
 
 // Decode and render at va into text/len. False when decode fails.
-bool re_render_insn_at(re_ctx_t *ctx, re_code_t *code, uint64_t va, re_str_t *text,
-                       uint32_t *len);
+bool re_render_insn_at(re_ctx_t *ctx, re_code_t *code, uint64_t va, re_str_t *text, uint32_t *len);
 
 // Prefer .pdata RUNTIME_FUNCTION begin when it covers at and recovered size disagrees.
 bool re_pick_func_at(re_ctx_t *ctx, const re_fscan_t *scan, const re_pe_t *pe, const char *pos,
