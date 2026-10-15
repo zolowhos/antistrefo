@@ -114,7 +114,6 @@ static bool emit_switch(re_dc_emit_t *e, const re_ir_op_t *op, const re_dc_walk_
     re_dc_line(e, "}");
     return true;
 }
-
 static void emit_flow(re_dc_emit_t *e, const re_ir_op_t *op, const re_dc_walk_t *w) {
     uint32_t lbl = re_dc_label_of(w, (uint64_t)op->const_val);
     if (op->op == RE_OP_BRANCH) {
@@ -169,6 +168,16 @@ static void emit_flow(re_dc_emit_t *e, const re_ir_op_t *op, const re_dc_walk_t 
     }
 }
 
+static void emit_folded_disp(re_dc_emit_t *e, const char *lhs, const char *ty, const char *base,
+                             int64_t disp, const char *rhs) {
+    unsigned long long ad = (unsigned long long)(disp < 0 ? -disp : disp);
+    const char *sign = disp < 0 ? "-" : "+";
+    if (rhs)
+        re_dc_stmt(e, "*(%s *)(%s %s 0x%llx) = %s", ty, base, sign, ad, rhs);
+    else
+        re_dc_stmt(e, "%s = *(%s *)(%s %s 0x%llx)", lhs, ty, base, sign, ad);
+}
+
 static void emit_move(re_dc_emit_t *e, const re_ir_op_t *op) {
     char a[RE_DC_TEXT], b[RE_DC_TEXT];
     re_str_t name = re_dc_mint(e, "v", e->next_tmp++);
@@ -178,9 +187,8 @@ static void emit_move(re_dc_emit_t *e, const re_ir_op_t *op) {
         natural = op->in[0].space == RE_SPACE_STACK &&
                   re_dc_slot_width(e, disp = (int16_t)op->in[0].offset) == op->out.size;
         if (op->extra & RE_FOLD_DISP)
-            re_dc_stmt(e, "%s = *(%s *)(%s + 0x%llx)", (const char *)name.p,
-                       re_dc_type(op->out.size), re_dc_val(e, op->in[0], a),
-                       (unsigned long long)op->const_val);
+            emit_folded_disp(e, (const char *)name.p, re_dc_type(op->out.size),
+                             re_dc_val(e, op->in[0], a), op->const_val, NULL);
         else if (natural)
             re_dc_stmt(e, "%s = %s", (const char *)name.p, re_dc_local(e, disp));
         else
@@ -192,9 +200,8 @@ static void emit_move(re_dc_emit_t *e, const re_ir_op_t *op) {
     natural = op->in[2].space == RE_SPACE_STACK &&
               re_dc_slot_width(e, disp = (int16_t)op->in[2].offset) == op->in[0].size;
     if (op->extra & RE_FOLD_DISP)
-        re_dc_stmt(e, "*(%s *)(%s + 0x%llx) = %s", re_dc_type(op->in[0].size),
-                   re_dc_val(e, op->in[2], a), (unsigned long long)op->const_val,
-                   re_dc_val(e, op->in[1], b));
+        emit_folded_disp(e, NULL, re_dc_type(op->in[0].size), re_dc_val(e, op->in[2], a),
+                         op->const_val, re_dc_val(e, op->in[1], b));
     else if (natural)
         re_dc_stmt(e, "%s = %s", re_dc_local(e, disp), re_dc_val(e, op->in[1], b));
     else
@@ -452,6 +459,7 @@ static void print_body(re_dc_emit_t *e, const re_dc_walk_t *w, const re_ir_func_
         }
     }
 }
+
 bool re_decompile_ok(const re_decomp_t *d, const re_func_t *f) {
     re_dc_walk_t w = {0};
     if (!d || !f || !d->code || !d->arena)

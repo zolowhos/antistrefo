@@ -1,28 +1,20 @@
 // re_x64_lower.c - lowers a projected x86-64 instruction into the register IR.
 // Module: feature (C11).
 // Owns: the shared primitives, the mov and test forms, integer arithmetic, flow.
-// Depends: re_x64_priv.h. The lowering is deliberately stateless with respect to
-//           control flow: it reads one instruction and emits ops for it. Constant
-//           folding and register tracking belong to the emitter, which already has
-//           to model control flow, and a backend that remembered cross instruction
-//           state would have to be reset per function. The one counter it does keep
-//           lives in the IR, which is itself per function.
+// Depends: re_x64_priv.h. Stateless per instruction; folding lives in the emitter.
 #include "features/disasm/re_x64_priv.h"
 
 #include "features/dec/re_ir.h"
 
-// The operation size in bytes, shared with the other lowering files. Most forms
-// follow the operand size prefix, but a few
-// have their own width and get it wrong if the prefix is consulted instead. Only 0x82
-// is byte sized among the immediate group: 0x80, 0x81 and 0x83 all honour the prefix,
-// and treating them as byte operations would misread every stack adjustment.
+// Operand size in bytes. 0x80/0x82 are always byte; 0x81/0x83 honour the prefix.
 uint16_t x64_lower_osize(const re_insn_t *in) {
     unsigned op = RE_INSN_OPCODE(in);
     unsigned map = RE_INSN_MAP(in);
     if (map == 1 && (op == 0xB6 || op == 0xB7 || op == 0xBE || op == 0xBF))
         return 1;
-    if (map == 0 && (op == 0x88 || op == 0x8A || op == 0xC6 || (op >= 0xB0 && op <= 0xB7) ||
-                     (op >= 0x70 && op <= 0x7F) || op == 0x82))
+    if (map == 0 && (op == 0x80 || op == 0x82 || op == 0x88 || op == 0x8A || op == 0xC6 ||
+                     (op >= 0xB0 && op <= 0xB7) || (op >= 0x70 && op <= 0x7F) || op == 0xFE ||
+                     op == 0xF6 || (op <= 0x3E && (op & 1u) == 0)))
         return 1;
     return (uint16_t)in->opsize;
 }
@@ -79,18 +71,48 @@ re_varnode_t x64_lower_rm(const re_insn_t *in) {
     return re_ir_vn(RE_SPACE_HEAP, x64_lower_osize(in), 0);
 }
 
-// Emit the address of the memory operand and hand back the varnode that names it, so
-// the caller references the address it just produced rather than re-deriving one. A
-// RIP relative address is a constant, which is the only case where the value is
-// known; the other forms name the frame slot or stay abstract.
+// Address of a memory operand: RIP const, STACK for rsp/rbp, else reg or reg+disp.
 bool x64_lower_addr(re_ir_func_t *f, re_arena_t *a, const re_insn_t *in, re_varnode_t *out) {
-    re_ir_op_t op = in->rip_rel ? x64_lower_mk(RE_OP_CONST) : x64_lower_mk(RE_OP_VAR);
-    op.out = in->rip_rel ? const_vn(f) : mem_vn(in);
-    op.const_val = in->rip_rel ? (int64_t)in->mem : 0;
-    // An address exists only to be an operand of the load or store that follows, so
-    // the emitter is told not to print it as a statement of its own.
-    if (in->rip_rel)
+    re_ir_op_t op;
+    re_varnode_t imm;
+    if (in->rip_rel) {
+        op = x64_lower_mk(RE_OP_CONST);
+        op.out = const_vn(f);
+        op.const_val = (int64_t)in->mem;
         op.extra = RE_CONST_OPERAND;
+        if (!x64_lower_push(f, a, op))
+            return false;
+        *out = op.out;
+        return true;
+    }
+    if (in->base == 4 || in->base == 5) {
+        op = x64_lower_mk(RE_OP_VAR);
+        op.out = mem_vn(in);
+        if (!x64_lower_push(f, a, op))
+            return false;
+        *out = op.out;
+        return true;
+    }
+    if (in->base != RE_REG_NONE && in->index == RE_REG_NONE) {
+        re_varnode_t base = re_ir_vn(RE_SPACE_REG, 8, in->base);
+        if (in->disp == 0) {
+            *out = base;
+            return true;
+        }
+        if (!x64_lower_imm(f, a, in->disp, &imm))
+            return false;
+        op = x64_lower_mk(RE_OP_INTADD);
+        op.out = x64_lower_uniq(f, 8);
+        op.in[0] = base;
+        op.in[1] = imm;
+        op.const_val = in->disp;
+        if (!x64_lower_push(f, a, op))
+            return false;
+        *out = op.out;
+        return true;
+    }
+    op = x64_lower_mk(RE_OP_VAR);
+    op.out = re_ir_vn(RE_SPACE_HEAP, 8, 0);
     if (!x64_lower_push(f, a, op))
         return false;
     *out = op.out;

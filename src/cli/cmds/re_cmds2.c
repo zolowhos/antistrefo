@@ -61,50 +61,65 @@ static bool render_at(re_code_t *code, uint64_t va, re_str_t *text, re_arena_t *
     return true;
 }
 
+// True when the decoded instruction carries v as an immediate or a displacement.
+static bool insn_carries_value(const re_insn_t *in, uint64_t v) {
+    unsigned w;
+    for (w = 1; w <= 8; w *= 2) {
+        uint64_t mask = w == 8 ? ~(uint64_t)0 : ((uint64_t)1 << (w * 8)) - 1u;
+        if (v > mask)
+            continue;
+        if (((uint64_t)in->imm & mask) == v)
+            return true;
+        if (((uint64_t)in->disp & mask) == v)
+            return true;
+    }
+    return (uint64_t)in->imm == v || (uint64_t)in->disp == v;
+}
+
 // Prefer function-linear snap so a mid-immediate payload is never the decode site.
-static bool insn_covering(re_code_t *code, const re_fscan_t *scan, uint64_t va, uint64_t *insn_va,
-                          re_str_t *text, re_arena_t *a) {
+// When check_val is set, reject a covering decode that does not carry want.
+static bool insn_covering(re_code_t *code, const re_fscan_t *scan, uint64_t va, bool check_val,
+                          uint64_t want, uint64_t *insn_va, re_str_t *text, re_arena_t *a) {
     uint64_t best = 0;
     bool found = false;
+    re_insn_t in;
     if (!code || !code->dis || !re_code_in_code(code, va))
         return false;
     if (scan) {
         long fi = re_func_index_of(scan, va);
         if (fi >= 0) {
             const re_func_t *f = re_func_at(scan, (size_t)fi);
-            if (f && re_snap_insn_va(code, f->va, va, &best) && render_at(code, best, text, a)) {
-                *insn_va = best;
-                return true;
-            }
+            if (f && re_snap_insn_va(code, f->va, va, &best))
+                found = true;
         }
     }
-    for (uint64_t back = 1; back < 16; back++) {
-        re_insn_t in;
+    for (uint64_t back = 1; !found && back < 16; back++) {
         uint64_t try_va = va - back;
         if (!re_code_in_code(code, try_va) || !re_code_insn(code, try_va, &in))
             continue;
         if (va >= try_va && va < try_va + in.size) {
             best = try_va;
             found = true;
-            break;
         }
     }
-    if (!found) {
-        re_insn_t in;
-        if (re_code_insn(code, va, &in) && in.size > 0) {
-            best = va;
-            found = true;
-        }
+    if (!found && re_code_insn(code, va, &in) && in.size > 0) {
+        best = va;
+        found = true;
     }
-    if (!found || !render_at(code, best, text, a))
+    if (!found || !re_code_insn(code, best, &in))
+        return false;
+    if (check_val && !insn_carries_value(&in, want))
+        return false;
+    if (!render_at(code, best, text, a))
         return false;
     *insn_va = best;
     return true;
 }
 
 // Optional 0x/0X prefix, then every width that can hold the value (LE and BE).
-// Collect unbounded here; the command pages with code hits preferred.
-static bool run_immediate(re_ctx_t *ctx, re_span_t img, re_str_t pat, re_search_t *s) {
+// Digit count does not pin width: imm:1E78 is still searched as 16/32/64. Prefer
+// zero-padded dword forms (imm:00001E78) when the agent means a 32-bit field.
+static bool parse_imm_value(re_ctx_t *ctx, re_str_t pat, uint64_t *out) {
     uint64_t v = 0;
     size_t i = 0;
     if (pat.n >= 2 && pat.p[0] == '0' && (pat.p[1] == 'x' || pat.p[1] == 'X'))
@@ -121,7 +136,14 @@ static bool run_immediate(re_ctx_t *ctx, re_span_t img, re_str_t pat, re_search_
         }
         v = v * 16u + (uint64_t)d;
     }
-    re_search_immediate_all(img, v, 0, 0, ctx->arena, s);
+    *out = v;
+    return true;
+}
+
+static bool run_immediate(re_ctx_t *ctx, re_span_t img, re_str_t pat, re_search_t *s, uint64_t *v) {
+    if (!parse_imm_value(ctx, pat, v))
+        return false;
+    re_search_immediate_all(img, *v, 0, 0, ctx->arena, s);
     return true;
 }
 
@@ -174,9 +196,10 @@ static void emit_text_extra(re_jw_t *w, re_ctx_t *ctx, re_span_t img, const re_s
 }
 
 static void emit_hits(re_ctx_t *ctx, re_span_t img, re_format_t fmt, const re_pe_t *pe,
-                      re_code_t *code, const re_fscan_t *scan, re_search_t *s, bool as_text) {
+                      re_code_t *code, const re_fscan_t *scan, re_search_t *s, bool as_text,
+                      bool filter_imm, uint64_t imm_v) {
     re_jw_t w;
-    size_t i;
+    size_t i, shown = 0;
     re_jw_init(&w, ctx->arena);
     envelope(&w, "search", img, fmt);
     re_jw_key(&w, "hits");
@@ -184,16 +207,23 @@ static void emit_hits(re_ctx_t *ctx, re_span_t img, re_format_t fmt, const re_pe
     for (i = 0; i < RE_VEC_LEN(&s->hits); i++) {
         const re_search_hit_t *h = RE_VEC_PTR(&s->hits, re_search_hit_t, i);
         uint32_t rva = 0;
-        uint64_t hit_va = 0;
-        uint64_t insn_va = 0;
+        uint64_t hit_va = 0, insn_va = 0;
         re_str_t insn_text;
+        bool have_insn = false;
+        if (pe && pe->valid && re_pe_off2rva(pe, h->off, &rva))
+            hit_va = pe->image_base + rva;
+        if (code && hit_va) {
+            have_insn = insn_covering(code, scan, hit_va, filter_imm, imm_v, &insn_va, &insn_text,
+                                      ctx->arena);
+            if (filter_imm && re_code_in_code(code, hit_va) && !have_insn)
+                continue;
+        }
         re_jw_obj(&w);
         re_jw_khex(&w, "off", h->off, 8);
-        if (pe && pe->valid && re_pe_off2rva(pe, h->off, &rva)) {
-            hit_va = pe->image_base + rva;
+        if (hit_va) {
             re_jw_ku64(&w, "rva", rva);
             re_jw_khex(&w, "va", hit_va, 16);
-            if (code && insn_covering(code, scan, hit_va, &insn_va, &insn_text, ctx->arena)) {
+            if (have_insn) {
                 re_jw_khex(&w, "insn_va", insn_va, 16);
                 re_jw_kstr(&w, "insn_text", insn_text);
                 if (insn_va != hit_va)
@@ -204,10 +234,11 @@ static void emit_hits(re_ctx_t *ctx, re_span_t img, re_format_t fmt, const re_pe
         if (as_text)
             emit_text_extra(&w, ctx, img, h);
         re_jw_obj_end(&w);
+        shown++;
     }
     re_jw_arr_end(&w);
-    re_jw_ku64(&w, "total", s->total);
-    re_jw_kbool(&w, "truncated", s->more);
+    re_jw_ku64(&w, "total", filter_imm ? shown : s->total);
+    re_jw_kbool(&w, "truncated", filter_imm ? false : s->more);
     re_jw_obj_end(&w);
     re_jw_flush(&w, re_ctx_out(ctx));
 }
@@ -229,7 +260,7 @@ static bool bind_search_code(re_span_t img, re_arena_t *a, re_pe_t *pe, re_code_
 }
 
 static bool run_search(re_ctx_t *ctx, re_span_t img, re_search_kind_t *kind, re_str_t pat,
-                       re_search_t *s) {
+                       re_search_t *s, uint64_t *imm_v) {
     uint8_t *by = NULL;
     uint8_t *mk = NULL;
     size_t n = 0;
@@ -243,7 +274,7 @@ static bool run_search(re_ctx_t *ctx, re_span_t img, re_search_kind_t *kind, re_
     if (*kind == RE_SEARCH_BYTES)
         re_search_bytes(img, by, mk, n, ctx->offset, ctx->limit, ctx->arena, s);
     else if (*kind == RE_SEARCH_IMMEDIATE)
-        return run_immediate(ctx, img, pat, s);
+        return run_immediate(ctx, img, pat, s, imm_v);
     else if (*kind == RE_SEARCH_TEXT)
         re_search_text(img, pat, false, true, false, ctx->offset, ctx->limit, ctx->arena, s);
     else
@@ -261,6 +292,7 @@ int re_cmd_search(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_str_t pat;
     re_search_kind_t kind;
     re_search_t s;
+    uint64_t imm_v = 0;
     bool have_code;
     if (!pat_arg) {
         RE_ERR_SET(ctx->err, RE_E_USAGE,
@@ -275,7 +307,7 @@ int re_cmd_search(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     have_code = bind_search_code(f.whole, ctx->arena, &pe, &code, &scan);
     kind = search_kind(re_str(pat_arg), &pat);
     re_search_init(&s);
-    if (!run_search(ctx, f.whole, &kind, pat, &s)) {
+    if (!run_search(ctx, f.whole, &kind, pat, &s, &imm_v)) {
         re_file_close(&f);
         return re_err_exit_code(ctx->err->code);
     }
@@ -283,7 +315,8 @@ int re_cmd_search(re_ctx_t *ctx, const char *path, int argc, char **argv) {
         page_imm_hits(&s, have_code ? &pe : NULL, have_code ? &code : NULL, ctx->offset, ctx->limit,
                       ctx->arena);
     emit_hits(ctx, f.whole, re_format_detect(f.whole), &pe, have_code ? &code : NULL,
-              have_code ? &scan : NULL, &s, kind == RE_SEARCH_TEXT || kind == RE_SEARCH_SIGNATURE);
+              have_code ? &scan : NULL, &s, kind == RE_SEARCH_TEXT || kind == RE_SEARCH_SIGNATURE,
+              kind == RE_SEARCH_IMMEDIATE, imm_v);
     re_file_close(&f);
     return 0;
 }

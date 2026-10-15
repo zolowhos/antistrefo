@@ -20,8 +20,6 @@
 #include "utils/json/re_json.h"
 #include "utils/text/re_strbuf.h"
 
-// The flags a function carries, as names rather than a bitmask, because a caller
-// reading this should not have to know which bit means prologue.
 static void emit_flags(re_jw_t *w, uint32_t flags) {
     static const struct {
         uint32_t bit;
@@ -37,9 +35,6 @@ static void emit_flags(re_jw_t *w, uint32_t flags) {
         {RE_FUNC_EXTERNAL, "calls_outside"},
         {RE_FUNC_JTABLE, "indirect_jump"},
         {RE_FUNC_RET, "returns"},
-        // Provenance, so a reader can tell a bound the compiler stated from one
-        // inferred from bytes. Only the first two are facts about the binary; the
-        // rest are what a pass concluded, and a report should not hide which.
         {RE_FUNC_UNWIND, "unwind"},
         {RE_FUNC_JUNK, "junk"},
         {RE_FUNC_TRUNC, "trunc"},
@@ -66,14 +61,8 @@ static void emit_func(re_ctx_t *ctx, re_code_t *code, re_jw_t *w, const re_func_
     re_jw_ku64(w, "calls", f->n_calls);
     re_jw_ku64(w, "jumps", f->n_jumps);
     re_jw_ku64(w, "out_edges", edges);
-    // Bytes inside the body that do not decode. Emitted only when there are some,
-    // because a zero here means nothing was skipped and a reader should be able to
-    // tell that from a field that was never computed.
     if (f->junk)
         re_jw_ku64(w, "junk", f->junk);
-    // Transfers whose destination could not be resolved: a call through a register
-    // and a jump through a table both land here, and a reader counting calls needs
-    // to know how many were left open rather than silently missing them.
     if (f->open_edges)
         re_jw_ku64(w, "open_edges", f->open_edges);
     if (f->flags & RE_FUNC_TRUNC)
@@ -85,9 +74,6 @@ static void emit_func(re_ctx_t *ctx, re_code_t *code, re_jw_t *w, const re_func_
     re_jw_kcstr(w, "cc", re_cc_name(st.cc));
     re_jw_ku64(w, "params", st.n_params);
     re_jw_ku64(w, "locals", st.n_locals);
-    // The registers as well as the count. A count says how many arguments there are;
-    // the names say which ones, which is what makes a recovered signature readable
-    // without cross checking the calling convention by hand.
     re_jw_key(w, "arg_regs");
     re_jw_arr(w);
     for (uint32_t k = 0; k < st.n_params && k < RE_CC_MAX_ARGS; k++)
@@ -99,8 +85,6 @@ static void emit_func(re_ctx_t *ctx, re_code_t *code, re_jw_t *w, const re_func_
         re_jw_kbool(w, "tail_call", true);
     if (f->name.n)
         re_jw_kstr(w, "name", f->name);
-    // The library a signature named, when one did. A name on its own says what the
-    // function is called; the module says which evidence produced that name.
     if (f->module.n)
         re_jw_kstr(w, "module", f->module);
     if (xs) {
@@ -193,8 +177,6 @@ int re_cmd_funcs(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     return 0;
 }
 
-// The flags a reference carries, as names. Same reasoning as the function flags:
-// a reader should not have to know which bit means import.
 static void emit_ref_flags(re_jw_t *w, uint8_t flags) {
     static const struct {
         uint8_t bit;
@@ -227,8 +209,41 @@ static const char *kind_name(uint8_t k) {
     }
 }
 
-static void emit_ref(re_ctx_t *ctx, re_code_t *code, re_jw_t *w, const re_xref_t *r,
-                     long func_index) {
+// ~32 bytes of disassembly each side of from (nearby stores in one query).
+static void emit_ref_window(re_ctx_t *ctx, re_code_t *code, const re_fscan_t *scan, re_jw_t *w,
+                            uint64_t from) {
+    uint64_t start = from > 32 ? from - 32 : from, end = from + 32, va = start;
+    re_strbuf_t line;
+    long fi = scan ? re_func_index_of(scan, from) : -1;
+    if (fi >= 0) {
+        const re_func_t *f = re_func_at(scan, (size_t)fi);
+        uint64_t snapped = start;
+        if (f && start >= f->va && re_snap_insn_va(code, f->va, start, &snapped))
+            va = snapped;
+    }
+    re_strbuf_init(&line, ctx->arena);
+    re_jw_key(w, "window");
+    re_jw_arr(w);
+    while (va < end) {
+        re_insn_t in;
+        if (!re_code_insn(code, va, &in) || in.size == 0)
+            break;
+        re_strbuf_clear(&line);
+        if (code->dis)
+            code->dis->render(code->dis->ctx, &in, ctx->arena, &line);
+        re_jw_obj(w);
+        re_jw_khex(w, "va", va, 16);
+        re_jw_kstr(w, "text", re_str(line.p ? line.p : ""));
+        if (va == from)
+            re_jw_kbool(w, "at", true);
+        re_jw_obj_end(w);
+        va += in.size;
+    }
+    re_jw_arr_end(w);
+}
+
+static void emit_ref(re_ctx_t *ctx, re_code_t *code, const re_fscan_t *scan, re_jw_t *w,
+                     const re_xref_t *r, long func_index) {
     re_str_t text;
     uint32_t from_len = 0;
     re_jw_obj(w);
@@ -240,6 +255,8 @@ static void emit_ref(re_ctx_t *ctx, re_code_t *code, re_jw_t *w, const re_xref_t
         re_jw_kstr(w, "from_text", text);
         re_jw_ku64(w, "from_len", from_len);
     }
+    if (code && code->dis && re_code_in_code(code, r->from))
+        emit_ref_window(ctx, code, scan, w, r->from);
     if (r->name.n)
         re_jw_kstr(w, "name", r->name);
     if (func_index >= 0)
@@ -262,21 +279,12 @@ static void emit_side(re_ctx_t *ctx, re_code_t *code, re_jw_t *w, const re_xrefs
         else
             r = from_side ? re_xref_from_at(xs, subject, i) : re_xref_to_at(xs, subject, i);
         if (r)
-            emit_ref(ctx, code, w, r, re_func_index_of(scan, from_side ? r->to : r->from));
+            emit_ref(ctx, code, scan, w, r, re_func_index_of(scan, from_side ? r->to : r->from));
     }
     re_jw_arr_end(w);
 }
 
-// The subject is one address, given as an RVA or a virtual address. xrefs to it
-// are the question worth asking, and the callers are the useful part of the
-// answer, so both directions come back.
-// The window a subject's references are searched over, and the fields describing it.
-// A subject inside a function is searched over that whole function, which is what a
-// reader asking about a function means. A subject outside every function - a string, a
-// constant, a vtable slot, which is the normal case for the things people actually
-// want xrefs for - is searched at its own address. It used to be searched at a window
-// of zero, which skipped the query and reported no references at all, so every string
-// in every binary looked like nothing pointed at it.
+// Subject span: whole owning function, or 1 for data outside every function.
 static uint64_t subject_span(const re_fscan_t *scan, uint64_t subject, bool *is_func) {
     long fi = re_func_index_of(scan, subject);
     *is_func = fi >= 0;
@@ -360,9 +368,6 @@ static bool disasm_span(re_ctx_t *ctx, const re_pe_t *pe, const char *pos, uint6
     return true;
 }
 
-// One instruction, rendered and emitted. Text is the backend's job, reached
-// through the vtable, so a caller never needs to know which architecture it is
-// looking at.
 static void emit_insn(re_ctx_t *ctx, re_code_t *code, re_strbuf_t *line, re_jw_t *w, uint64_t va,
                       const re_insn_t *in) {
     re_strbuf_clear(line);
@@ -386,23 +391,22 @@ static void emit_insn(re_ctx_t *ctx, re_code_t *code, re_strbuf_t *line, re_jw_t
     re_jw_obj_end(w);
 }
 
-static void disasm_bind(re_ctx_t *ctx, re_code_t *code, re_fscan_t *scan, uint64_t asked,
-                        uint64_t *at, uint64_t *span, uint64_t *insn_va, const re_func_t **fn,
-                        long *fi) {
+static void disasm_bind(re_code_t *code, re_fscan_t *scan, uint64_t asked, uint64_t *at,
+                        uint64_t *span, uint64_t *insn_va, const re_func_t **fn, long *fi) {
+    uint64_t end;
     *at = asked;
     *insn_va = 0;
     *fn = NULL;
     *fi = re_func_index_of(scan, asked);
-    if (*fi < 0)
-        return;
-    *fn = re_func_at(scan, (size_t)*fi);
-    if (*fn && re_snap_insn_va(code, (*fn)->va, asked, insn_va))
-        *at = *insn_va;
-    if (!ctx->len) {
-        *span = (*fn)->size - (*at - (*fn)->va);
-        if (*span > 512)
-            *span = 512;
+    if (*fi >= 0) {
+        *fn = re_func_at(scan, (size_t)*fi);
+        if (*fn && re_snap_insn_va(code, (*fn)->va, asked, insn_va))
+            *at = *insn_va;
     }
+    // --len (default 256) counts bytes after the requested address, not after snap.
+    end = asked + *span;
+    if (end > *at)
+        *span = end - *at;
 }
 
 int re_cmd_disasm(re_ctx_t *ctx, const char *path, int argc, char **argv) {
@@ -423,7 +427,7 @@ int re_cmd_disasm(re_ctx_t *ctx, const char *path, int argc, char **argv) {
         re_file_close(&f);
         return re_err_exit_code(ctx->err->code);
     }
-    disasm_bind(ctx, &code, &scan, asked, &at, &span, &insn_va, &fn, &fi);
+    disasm_bind(&code, &scan, asked, &at, &span, &insn_va, &fn, &fi);
     re_strbuf_init(&line, ctx->arena);
     re_jw_init(&w, ctx->arena);
     re_envelope(&w, "disasm", f.whole, &pe);

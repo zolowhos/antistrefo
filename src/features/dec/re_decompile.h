@@ -42,7 +42,7 @@ typedef struct {
 // the register transfer list expressed in the shape a reader expects, with the
 // control flow and the calls named. Anything the arch did not lower is printed as a
 // comment carrying the address, so nothing is silently dropped.
-// st is updated so displacements[] matches every local_* printed in source.
+// st is updated so stack_slots[] matches every local_* printed in source.
 void re_decompile_func(const re_decomp_t *d, const re_func_t *f, re_stack_t *st, re_strbuf_t *out);
 
 // True when the function lowered to something worth reading: at least one modelled

@@ -86,9 +86,9 @@ static void write_map(re_jw_t *w, const re_vec_t *sites, const re_xrefset_t *xs)
     re_jw_arr_end(w);
 }
 
-static void write_disps(re_jw_t *w, const re_stack_t *st) {
+static void write_stack_slots(re_jw_t *w, const re_stack_t *st) {
     size_t i;
-    re_jw_key(w, "displacements");
+    re_jw_key(w, "stack_slots");
     re_jw_arr(w);
     for (i = 0; i < st->n_slots; i++) {
         int32_t d = st->slots[i];
@@ -109,14 +109,30 @@ static const char *mem_op_kind(const re_insn_t *in) {
     unsigned op = RE_INSN_OPCODE(in);
     if (map == 0 && (op == 0x89 || op == 0x88 || op == 0xC6 || op == 0xC7))
         return "store";
+    if (map == 0 && ((op >= 0x38 && op <= 0x3D) || op == 0x84 || op == 0x85 ||
+                     ((op >= 0x80 && op <= 0x83) && (in->reg & 7u) == 7u)))
+        return "cmp";
     return "load";
 }
 
-// Paginated index of every [reg+/-disp] load/store in the walked function body.
-static void write_mem_ops(re_jw_t *w, re_code_t *code, const re_func_t *fn, size_t limit) {
+// Memory access width: byte opcodes stay 1 even when the default opsize is 4.
+static uint8_t mem_op_size(const re_insn_t *in) {
+    unsigned map = RE_INSN_MAP(in);
+    unsigned op = RE_INSN_OPCODE(in);
+    if (map == 0 && (op == 0x80 || op == 0x82 || op == 0x88 || op == 0x8A || op == 0xC6 ||
+                     op == 0xFE || op == 0xF6 || (op <= 0x3E && (op & 1u) == 0)))
+        return 1;
+    return in->opsize ? in->opsize : 8;
+}
+
+// Paginated [reg+/-disp] ops. When at is inside the function, the page starts there
+// so a large body does not truncate past the decompile site.
+static void write_mem_ops(re_jw_t *w, re_code_t *code, const re_func_t *fn, uint64_t at,
+                          size_t limit) {
     uint64_t va = fn->va;
-    size_t shown = 0;
-    size_t total = 0;
+    uint64_t focus = (at >= fn->va && at < fn->va + fn->size) ? at : fn->va;
+    size_t shown = 0, total = 0;
+    bool reached = focus <= fn->va;
     re_jw_key(w, "mem_ops");
     re_jw_arr(w);
     while (va < fn->va + fn->size) {
@@ -124,9 +140,11 @@ static void write_mem_ops(re_jw_t *w, re_code_t *code, const re_func_t *fn, size
         const char *reg;
         if (!re_code_insn(code, va, &in) || in.size == 0)
             break;
+        if (va >= focus)
+            reached = true;
         if (in.is_mem && in.base != RE_REG_NONE && in.base != RE_REG_RIP) {
             total++;
-            if (shown < limit) {
+            if (reached && shown < limit) {
                 reg = (code->dis && code->dis->reg_name)
                           ? code->dis->reg_name(code->dis->ctx, in.base)
                           : "?";
@@ -134,7 +152,7 @@ static void write_mem_ops(re_jw_t *w, re_code_t *code, const re_func_t *fn, size
                 re_jw_khex(w, "va", va, 16);
                 re_jw_kcstr(w, "reg", reg ? reg : "?");
                 re_jw_ki64(w, "disp", in.disp);
-                re_jw_ku64(w, "size", in.opsize ? in.opsize : 8);
+                re_jw_ku64(w, "size", mem_op_size(&in));
                 re_jw_kcstr(w, "op", mem_op_kind(&in));
                 re_jw_obj_end(w);
                 shown++;
@@ -162,8 +180,8 @@ static void write_decomp(re_ctx_t *ctx, re_span_t img, re_pe_t *pe, re_code_t *c
     re_jw_kcstr(&w, "cc", re_cc_name(st->cc));
     re_jw_ku64(&w, "params", st->n_params);
     re_jw_ku64(&w, "locals", st->n_locals);
-    write_disps(&w, st);
-    write_mem_ops(&w, code, fn, ctx->limit ? ctx->limit : 200);
+    write_stack_slots(&w, st);
+    write_mem_ops(&w, code, fn, at, ctx->limit ? ctx->limit : 200);
     re_jw_kbool(&w, "ok", ok);
     if (fn->name.n)
         re_jw_kstr(&w, "name", fn->name);
