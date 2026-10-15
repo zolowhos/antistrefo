@@ -69,6 +69,56 @@ uint8_t re_dc_slot_width(const re_dc_emit_t *e, int16_t disp) {
     return at >= 0 ? e->sw_w[at] : 0;
 }
 
+static bool is_image_va(const re_dc_emit_t *e, int64_t v) {
+    uint64_t u;
+    uint64_t b;
+    if (!e->code || !e->code->pe || !e->code->pe->valid)
+        return false;
+    u = (uint64_t)v;
+    b = e->code->pe->image_base;
+    return u >= b && (u - b) < e->code->pe->size_of_image;
+}
+
+void re_dc_emit_const(re_dc_emit_t *e, const re_ir_op_t *op) {
+    bool hex = false;
+    if (op->out.offset < RE_DC_VARS) {
+        e->cval[op->out.offset] = op->const_val;
+        if (is_image_va(e, op->const_val)) {
+            e->caddr[op->out.offset] = true;
+            hex = true;
+        }
+    }
+    if (op->extra & RE_CONST_OPERAND)
+        return;
+    {
+        re_str_t name = re_dc_mint(e, "v", e->next_tmp++);
+        if (hex)
+            re_dc_stmt(e, "%s = 0x%llx", (const char *)name.p, (unsigned long long)op->const_val);
+        else
+            re_dc_stmt(e, "%s = %lld", (const char *)name.p, (long long)op->const_val);
+        re_dc_bind(e, op->out, name);
+    }
+}
+
+void re_dc_merge_slots(const re_dc_emit_t *e, re_stack_t *st) {
+    uint32_t i, j;
+    if (!e || !st)
+        return;
+    for (i = 0; i < e->n_sw; i++) {
+        int32_t d = e->sw_disp[i];
+        bool have = false;
+        for (j = 0; j < st->n_slots; j++) {
+            if (st->slots[j] == d) {
+                have = true;
+                break;
+            }
+        }
+        if (!have && st->n_slots < RE_SLOT_MAX)
+            st->slots[st->n_slots++] = d;
+    }
+    st->n_locals = st->n_slots;
+}
+
 const char *re_dc_local(re_dc_emit_t *e, int16_t disp) {
     unsigned m = disp < 0 ? (unsigned)(-(int)disp) : (unsigned)disp;
     snprintf(e->lname, (size_t)RE_DC_TEXT, "%s%u", disp < 0 ? "local_m" : "local_p", m);

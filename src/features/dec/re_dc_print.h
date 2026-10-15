@@ -97,6 +97,13 @@ const char *re_dc_local(re_dc_emit_t *e, int16_t disp);
 // stores read. A width of zero means the displacement was never touched.
 void re_dc_learn_widths(re_dc_emit_t *e, const re_ir_func_t *ir);
 uint8_t re_dc_slot_width(const re_dc_emit_t *e, int16_t disp);
+
+// Image-window constants print as 0x VAs; CONST_OPERAND stays silent.
+void re_dc_emit_const(re_dc_emit_t *e, const re_ir_op_t *op);
+
+// Union emitter-learned stack slots into st so displacements[] matches source.
+void re_dc_merge_slots(const re_dc_emit_t *e, re_stack_t *st);
+
 const char *re_dc_type(uint16_t size);
 const char *re_dc_ftype(uint16_t size);
 const char *re_dc_binop(re_op_kind_t k);

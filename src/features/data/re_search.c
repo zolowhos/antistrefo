@@ -274,6 +274,49 @@ static void dedupe_by_offset(re_search_t *out) {
     out->total = w;
 }
 
+static bool imm_width_holds(uint64_t value, unsigned width) {
+    if (width == 1)
+        return value <= 0xFFu;
+    if (width == 2)
+        return value <= 0xFFFFu;
+    if (width == 4)
+        return value <= 0xFFFFFFFFu;
+    return width == 8;
+}
+
+void re_search_immediate_all(re_span_t img, uint64_t value, size_t offset, size_t limit,
+                             re_arena_t *a, re_search_t *out) {
+    // Widest first so a 4-byte imm is not buried under every matching byte, and so
+    // dedupe-by-off keeps the widest encoding when several share a start.
+    static const unsigned kW[] = {8u, 4u, 2u, 1u};
+    size_t i, n;
+    for (i = 0; i < 4u; i++) {
+        if (!imm_width_holds(value, kW[i]))
+            continue;
+        re_search_immediate(img, value, kW[i], true, 0, 0, a, out);
+    }
+    dedupe_by_offset(out);
+    n = RE_VEC_LEN(&out->hits);
+    if (offset >= n) {
+        re_vec_truncate(&out->hits, 0);
+        out->total = 0;
+        out->more = false;
+        return;
+    }
+    if (offset > 0) {
+        for (i = offset; i < n; i++)
+            RE_VEC_AT(&out->hits, re_search_hit_t, i - offset) =
+                RE_VEC_AT(&out->hits, re_search_hit_t, i);
+        re_vec_truncate(&out->hits, n - offset);
+        n = RE_VEC_LEN(&out->hits);
+    }
+    out->total = n;
+    if (limit && n > limit) {
+        re_vec_truncate(&out->hits, limit);
+        out->more = true;
+    }
+}
+
 void re_search_text(re_span_t img, re_str_t pat, bool use_regex, bool case_insensitive,
                     bool wide_only, size_t offset, size_t limit, re_arena_t *a, re_search_t *out) {
     if (pat.n == 0)

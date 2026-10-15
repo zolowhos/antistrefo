@@ -56,6 +56,11 @@ void re_search_bytes(re_span_t img, const uint8_t *pat, const uint8_t *mask, siz
 void re_search_immediate(re_span_t img, uint64_t value, unsigned width, bool both_endians,
                          size_t offset, size_t limit, re_arena_t *a, re_search_t *out);
 
+// Search every width in {1,2,4,8} that can hold value, both endians, deduped by off.
+// Agents are not forced to know encoding width or zero-pad the query digits.
+void re_search_immediate_all(re_span_t img, uint64_t value, size_t offset, size_t limit,
+                             re_arena_t *a, re_search_t *out);
+
 // Find text, optionally as a regex, in both encodings. Wide matches are narrowed
 // so the reported text is always one byte per character.
 void re_search_text(re_span_t img, re_str_t pat, bool use_regex, bool case_insensitive,

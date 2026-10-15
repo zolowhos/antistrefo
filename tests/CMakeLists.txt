@@ -118,6 +118,16 @@ if(MSVC)
 endif()
 add_test(NAME stack COMMAND re_test_stack)
 
+# Universal decompile/agent contracts on synthetic PE only (no titled binaries).
+add_executable(re_test_qa_contracts test_qa_contracts.c)
+target_link_libraries(re_test_qa_contracts PRIVATE re_core re_utils re_flags)
+if(MSVC)
+    set_property(TARGET re_test_qa_contracts
+        PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_definitions(re_test_qa_contracts PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+add_test(NAME qa_contracts COMMAND re_test_qa_contracts)
+
 # The JSON reader suite is separate because a reader that is lenient about a malformed
 # frame is a protocol bug that shows up as a mysterious client disconnect.
 add_executable(re_test_jr test_jr.c)

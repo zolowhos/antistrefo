@@ -356,9 +356,10 @@ static void put_operands(re_strbuf_t *out, const re_insn_t *in, const char *m) {
         }
         return;
     }
-    // r/m first when the reg field is the destination: the order a reader scans.
+    // r/m first when the r/m field is the destination. movsxd (map0 0x63) is the
+    // opposite form, movsxd r64, r/m32, so it must not share this branch.
     bool reg_first = (map == 0 && (op == 0x89 || op == 0xC6 || op == 0x88)) ||
-                     (map == 1 && op >= 0x90 && op <= 0x9F) || (map == 0 && op == 0x63) ||
+                     (map == 1 && op >= 0x90 && op <= 0x9F) ||
                      (map == 1 && x64_simd_store(op, in->pfx));
     if (reg_first) {
         put_rm(out, in, m);

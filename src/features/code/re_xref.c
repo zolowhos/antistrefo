@@ -99,9 +99,42 @@ static bool in_data(const re_pe_t *pe, uint64_t va) {
         const re_pe_section_t *s = &pe->sec[i];
         uint64_t bytes = s->vsize > s->rsize ? s->vsize : s->rsize;
         if (va >= pe->image_base + s->vaddr && va - (pe->image_base + s->vaddr) < bytes)
-            return (s->chars & 0x20000000u) == 0;
+            return (s->chars & RE_SEC_EXEC) == 0;
     }
     return false;
+}
+
+static bool sec_is_bss(const re_pe_section_t *s) {
+    if (s->chars & RE_SEC_BSS)
+        return true;
+    return (s->chars & RE_SEC_WRITE) != 0 && (s->chars & RE_SEC_EXEC) == 0 && s->rsize == 0;
+}
+
+static bool in_bss(const re_pe_t *pe, uint64_t va) {
+    for (uint16_t i = 0; i < pe->n_sec; i++) {
+        const re_pe_section_t *s = &pe->sec[i];
+        uint64_t bytes = s->vsize > s->rsize ? s->vsize : s->rsize;
+        if (va >= pe->image_base + s->vaddr && va - (pe->image_base + s->vaddr) < bytes)
+            return sec_is_bss(s);
+    }
+    return false;
+}
+
+static bool read_ptr_at(const re_pe_t *pe, re_span_t img, uint64_t va, uint64_t *out) {
+    uint32_t rva;
+    uint64_t off = 0;
+    size_t step = pe->pe32plus ? 8u : 4u;
+    uint64_t v = 0;
+    size_t i;
+    if (va < pe->image_base)
+        return false;
+    rva = (uint32_t)(va - pe->image_base);
+    if (!re_pe_rva2off(pe, rva, &off) || off + step > img.n)
+        return false;
+    for (i = 0; i < step; i++)
+        v |= (uint64_t)img.p[off + i] << (i * 8);
+    *out = v;
+    return true;
 }
 
 // Everything classification needs, gathered once so the per edge work is a
@@ -142,6 +175,39 @@ static void classify(const xr_ctx_t *x, re_xref_t *r) {
         r->flags |= RE_XRF_DATA;
     if (r->flags == 0)
         r->flags |= RE_XRF_OUTSIDE;
+}
+
+// Readable non-exec sections: pointer-sized cells equal to a known string VA.
+static void scan_ptr_tables(xr_ctx_t *x, re_arena_t *a, re_xrefset_t *out) {
+    size_t step = x->pe->pe32plus ? 8u : 4u;
+    uint16_t si;
+    for (si = 0; si < x->pe->n_sec; si++) {
+        const re_pe_section_t *s = &x->pe->sec[si];
+        uint64_t base, end, va;
+        if ((s->chars & RE_SEC_EXEC) || !(s->chars & RE_SEC_READ) || s->rsize < step)
+            continue;
+        base = x->pe->image_base + s->vaddr;
+        end = base + (s->rsize < s->vsize ? s->rsize : s->vsize);
+        for (va = base; va + step <= end; va += step) {
+            uint64_t ptr = 0;
+            const named_t *n;
+            re_xref_t r;
+            if (!read_ptr_at(x->pe, x->code->img, va, &ptr))
+                continue;
+            n = find_named(&x->strings, ptr);
+            if (!n)
+                continue;
+            r.from = va;
+            r.to = ptr;
+            r.kind = RE_XR_DATA;
+            classify(x, &r);
+            r.flags |= RE_XRF_STRING | RE_XRF_DATA;
+            r.name = n->name;
+            if (in_bss(x->pe, ptr))
+                r.flags |= RE_XRF_GLOBAL_SLOT;
+            RE_VEC_PUSH(&out->fwd, a, r);
+        }
+    }
 }
 
 static uint8_t kind_of(uint8_t edge_kind) {
@@ -201,8 +267,6 @@ void re_xref_build(re_code_t *c, const re_fscan_t *scan, const re_pe_t *pe, re_a
         const re_edge_t *e = RE_VEC_PTR(&scan->edges, re_edge_t, i);
         re_xref_t r;
         if (!e->has_to) {
-            // An indirect transfer has no address to point at. Counting it keeps
-            // the report honest about how much of the code is not resolved.
             out->n_indirect++;
             continue;
         }
@@ -212,6 +276,7 @@ void re_xref_build(re_code_t *c, const re_fscan_t *scan, const re_pe_t *pe, re_a
         classify(&x, &r);
         RE_VEC_PUSH(&out->fwd, a, r);
     }
+    scan_ptr_tables(&x, a, out);
     re_vec_sort(&out->fwd, cmp_fwd, NULL);
     for (size_t i = 0; i < RE_VEC_LEN(&out->fwd); i++) {
         uint32_t idx = (uint32_t)i;

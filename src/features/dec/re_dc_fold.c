@@ -276,7 +276,7 @@ static void fold_disp(re_ir_func_t *f) {
             else if (op->op == RE_OP_STORE && same(op->in[2], add->out))
                 uses++;
         }
-        if (uses != 1)
+        if (uses == 0)
             continue;
         for (j = i + 1; j < n; j++) {
             re_ir_op_t *op = at(f, j, &n);

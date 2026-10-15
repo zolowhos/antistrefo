@@ -95,6 +95,28 @@ if(NOT imm_out MATCHES "\"insn_text\"")
     message(FATAL_ERROR "search imm: hits in code need insn_text: ${imm_out}")
 endif()
 
+# Optional 0x prefix must parse; multi-width must still attach opcode-aligned text.
+execute_process(
+    COMMAND "${ANTISTREFO}" search "${WORK}" "imm:0x1" --limit 5
+    OUTPUT_VARIABLE imm0x_out RESULT_VARIABLE rc)
+if(NOT rc EQUAL 0)
+    message(FATAL_ERROR "search imm:0x failed: ${rc}: ${imm0x_out}")
+endif()
+if(NOT imm0x_out MATCHES "\"insn_text\"")
+    message(FATAL_ERROR "search imm:0x hits need insn_text: ${imm0x_out}")
+endif()
+if(NOT imm0x_out MATCHES "\"mid_imm\":true")
+    message(FATAL_ERROR "imm payload hit should set mid_imm: ${imm0x_out}")
+endif()
+if(NOT imm0x_out MATCHES "mov eax, 0x1")
+    message(FATAL_ERROR "imm:0x should snap to covering mov: ${imm0x_out}")
+endif()
+
+# Decompile agent surfaces: mem_ops present; displacements key already checked.
+if(NOT dc_out MATCHES "\"mem_ops\"")
+    message(FATAL_ERROR "decompile missing mem_ops: ${dc_out}")
+endif()
+
 execute_process(
     COMMAND "${ANTISTREFO}" strings "${WORK}" --pattern Alpha
     OUTPUT_VARIABLE str_out RESULT_VARIABLE rc)

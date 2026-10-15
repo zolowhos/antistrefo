@@ -1,10 +1,7 @@
 // re_decompile.c - renders one function's lowered IR as C-like source.
 // Module: feature (C11).
 // Owns: which statement each op becomes, the signature, and the locals.
-// Depends: re_dc_print, re_dc_walk, re_code, re_xref, re_stack, re_strbuf.
-// Depends: re_dc_print (the emitter state), re_dc_walk (the block structure),
-//           re_code, re_xref (call names), re_stack (the signature). The decoder is
-//           reached only through the re_disasm_t vtable, so no x86 detail appears.
+// Depends: re_dc_print, re_dc_walk, re_code, re_xref, re_stack; arch via vtable.
 #include "features/dec/re_decompile.h"
 
 #include "features/code/re_jtable.h"
@@ -194,7 +191,11 @@ static void emit_move(re_dc_emit_t *e, const re_ir_op_t *op) {
     }
     natural = op->in[2].space == RE_SPACE_STACK &&
               re_dc_slot_width(e, disp = (int16_t)op->in[2].offset) == op->in[0].size;
-    if (natural)
+    if (op->extra & RE_FOLD_DISP)
+        re_dc_stmt(e, "*(%s *)(%s + 0x%llx) = %s", re_dc_type(op->in[0].size),
+                   re_dc_val(e, op->in[2], a), (unsigned long long)op->const_val,
+                   re_dc_val(e, op->in[1], b));
+    else if (natural)
         re_dc_stmt(e, "%s = %s", re_dc_local(e, disp), re_dc_val(e, op->in[1], b));
     else
         re_dc_stmt(e, "*(%s *)%s = %s", re_dc_type(op->in[0].size), re_dc_val(e, op->in[2], a),
@@ -229,13 +230,7 @@ static void emit_copy(re_dc_emit_t *e, const re_ir_op_t *op) {
 }
 
 static void take_const(re_dc_emit_t *e, const re_ir_op_t *op) {
-    if (op->out.offset < RE_DC_VARS)
-        e->cval[op->out.offset] = op->const_val;
-    if (op->extra & RE_CONST_OPERAND)
-        return;
-    re_str_t name = re_dc_mint(e, "v", e->next_tmp++);
-    re_dc_stmt(e, "%s = %lld", (const char *)name.p, (long long)op->const_val);
-    re_dc_bind(e, op->out, name);
+    re_dc_emit_const(e, op);
 }
 
 static void emit_fn(re_dc_emit_t *e, const re_ir_op_t *op) {
@@ -385,7 +380,8 @@ static void emit_sig(re_dc_emit_t *e, const re_func_t *f, const re_stack_t *st) 
     emit_params(e, st);
 }
 
-static void emit_locals(re_dc_emit_t *e, const re_stack_t *st) {
+static void emit_locals(re_dc_emit_t *e, re_stack_t *st) {
+    re_dc_merge_slots(e, st);
     for (uint32_t i = 0; i < e->n_sw; i++) {
         int16_t disp = e->sw_disp[i];
         uint8_t w = e->sw_w[i];
@@ -398,11 +394,8 @@ static void emit_locals(re_dc_emit_t *e, const re_stack_t *st) {
         re_strbuf_puts(e->o, re_dc_local(e, disp));
         re_strbuf_puts(e->o, ";\n");
     }
-    (void)st;
 }
 
-// comes back. A label goes in before the first instruction of a block, so the reader
-// sees the shape of the control flow rather than a jump with no destination nearby.
 static size_t ops_so_far(const re_ir_func_t *ir) {
     if (!ir->n_blocks)
         return 0;
@@ -467,8 +460,7 @@ bool re_decompile_ok(const re_decomp_t *d, const re_func_t *f) {
     return RE_VEC_LEN(&w.insns) > 0;
 }
 
-void re_decompile_func(const re_decomp_t *d, const re_func_t *f, const re_stack_t *st,
-                       re_strbuf_t *out) {
+void re_decompile_func(const re_decomp_t *d, const re_func_t *f, re_stack_t *st, re_strbuf_t *out) {
     re_dc_emit_t e = {0};
     re_ir_func_t ir;
     re_dc_walk_t w = {0};

@@ -170,20 +170,28 @@ const char *re_mcp_query_reference(const char *query) {
         "open_database first. save_database is unsupported.\n";
     static const char kDecomp[] =
         "Decompile: execute_query op=decompile addr=<ea>\n"
-        "Returns Tier B C-like source, at/func_va/func_end, displacements[].\n"
+        "Returns Tier B C-like source, at/func_va/func_end, displacements[],\n"
+        "and mem_ops[] ({va,reg,disp,size,op}) for every [reg+/-disp].\n"
+        "Every printed local_* appears in displacements[]. Image VAs print as 0x.\n"
+        "A lone cmp [reg+disp], imm is not an enum: proven offset != inferred name.\n"
         ".pdata begin wins when recovered size disagrees.\n";
     static const char kXref[] =
         "Xrefs: execute_query op=xrefs addr=<ea>\n"
         "called_from kept for compat; each hit has kind (call/jump/cond/data)\n"
-        "and from_text/from_len for the referring instruction.\n";
+        "and from_text/from_len for the referring instruction.\n"
+        "Pointer-table cells in readable non-exec sections that equal a string VA\n"
+        "are kind=data; global_slot when the target is BSS/common. total=0 if none.\n";
     static const char kStr[] =
         "Strings: pattern=<literal substring> or regex=<filter> [context=N]\n"
         "pattern is literal (not regex). Unfiltered scans are huge; narrow them.\n"
         "context adds neighboring strings on each side of a hit.\n";
     static const char kSearch[] =
-        "Search: addr=text:<pat> | imm:<hex> | raw:<hexpairs> | sym:<name>\n"
+        "Search: addr=text:<pat> | imm:<hex|0xhex> | raw:<hexpairs> | sym:<name>\n"
+        "imm: accepts optional 0x and searches every LE/BE width that can hold v.\n"
         "Bare hex pairs are raw bytes (raw: alias). Hits include va/rva;\n"
-        "executable hits also include insn_va and insn_text.\n";
+        "executable hits also include insn_va and insn_text (opcode-aligned).\n"
+        "When the hit lands mid-immediate, mid_imm=true and insn_va is the opcode.\n"
+        "Example imm query: any imm32 stride as imm:0x148 or imm:148.\n";
     static const char kDisasm[] =
         "Disasm: op=disasm addr=<ea>. Emits func_va/func_rva/func_size/func_end\n"
         "and unwind when known. Mid-instruction addresses snap to insn_va.\n";

@@ -104,9 +104,53 @@ static void write_disps(re_jw_t *w, const re_stack_t *st) {
     re_jw_arr_end(w);
 }
 
-static void write_decomp(re_ctx_t *ctx, re_span_t img, re_pe_t *pe, const re_func_t *fn,
-                         uint64_t at, const re_stack_t *st, bool ok, const re_strbuf_t *text,
-                         const re_names_stat_t *nm, re_vec_t *sites, re_xrefset_t *xs) {
+static const char *mem_op_kind(const re_insn_t *in) {
+    unsigned map = RE_INSN_MAP(in);
+    unsigned op = RE_INSN_OPCODE(in);
+    if (map == 0 && (op == 0x89 || op == 0x88 || op == 0xC6 || op == 0xC7))
+        return "store";
+    return "load";
+}
+
+// Paginated index of every [reg+/-disp] load/store in the walked function body.
+static void write_mem_ops(re_jw_t *w, re_code_t *code, const re_func_t *fn, size_t limit) {
+    uint64_t va = fn->va;
+    size_t shown = 0;
+    size_t total = 0;
+    re_jw_key(w, "mem_ops");
+    re_jw_arr(w);
+    while (va < fn->va + fn->size) {
+        re_insn_t in;
+        const char *reg;
+        if (!re_code_insn(code, va, &in) || in.size == 0)
+            break;
+        if (in.is_mem && in.base != RE_REG_NONE && in.base != RE_REG_RIP) {
+            total++;
+            if (shown < limit) {
+                reg = (code->dis && code->dis->reg_name)
+                          ? code->dis->reg_name(code->dis->ctx, in.base)
+                          : "?";
+                re_jw_obj(w);
+                re_jw_khex(w, "va", va, 16);
+                re_jw_kcstr(w, "reg", reg ? reg : "?");
+                re_jw_ki64(w, "disp", in.disp);
+                re_jw_ku64(w, "size", in.opsize ? in.opsize : 8);
+                re_jw_kcstr(w, "op", mem_op_kind(&in));
+                re_jw_obj_end(w);
+                shown++;
+            }
+        }
+        va += in.size;
+    }
+    re_jw_arr_end(w);
+    re_jw_ku64(w, "mem_ops_total", total);
+    re_jw_kbool(w, "mem_ops_truncated", shown < total);
+}
+
+static void write_decomp(re_ctx_t *ctx, re_span_t img, re_pe_t *pe, re_code_t *code,
+                         const re_func_t *fn, uint64_t at, const re_stack_t *st, bool ok,
+                         const re_strbuf_t *text, const re_names_stat_t *nm, re_vec_t *sites,
+                         re_xrefset_t *xs) {
     re_jw_t w;
     re_jw_init(&w, ctx->arena);
     re_envelope(&w, "decompile", img, pe);
@@ -119,6 +163,7 @@ static void write_decomp(re_ctx_t *ctx, re_span_t img, re_pe_t *pe, const re_fun
     re_jw_ku64(&w, "params", st->n_params);
     re_jw_ku64(&w, "locals", st->n_locals);
     write_disps(&w, st);
+    write_mem_ops(&w, code, fn, ctx->limit ? ctx->limit : 200);
     re_jw_kbool(&w, "ok", ok);
     if (fn->name.n)
         re_jw_kstr(&w, "name", fn->name);
@@ -171,7 +216,7 @@ int re_cmd_decompile(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     ok = re_decompile_ok(&d, fn);
     if (ok)
         re_decompile_func(&d, fn, &st, &text);
-    write_decomp(ctx, f.whole, &pe, fn, at, &st, ok, &text, &nm, &sites, &xs);
+    write_decomp(ctx, f.whole, &pe, &code, fn, at, &st, ok, &text, &nm, &sites, &xs);
     re_file_close(&f);
     return 0;
 }

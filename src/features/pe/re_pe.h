@@ -102,7 +102,10 @@ re_err_code_t re_pe_parse(re_span_t img, re_arena_t *a, re_pe_t *out);
 // states them, and answering "is this address code or data" is a question about the
 // file, not about any particular analysis pass layered on top of it.
 #define RE_SEC_CODE 0x00000020u
+#define RE_SEC_BSS 0x00000080u
 #define RE_SEC_EXEC 0x20000000u
+#define RE_SEC_READ 0x40000000u
+#define RE_SEC_WRITE 0x80000000u
 
 bool re_pe_rva2off(const re_pe_t *pe, uint32_t rva, uint64_t *out);
 

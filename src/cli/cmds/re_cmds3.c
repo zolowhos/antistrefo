@@ -200,9 +200,10 @@ static void emit_ref_flags(re_jw_t *w, uint8_t flags) {
         uint8_t bit;
         const char *name;
     } kNames[] = {
-        {RE_XRF_CODE, "code"},     {RE_XRF_IMPORT, "import"}, {RE_XRF_EXPORT, "export"},
-        {RE_XRF_STRING, "string"}, {RE_XRF_DATA, "data"},     {RE_XRF_OUTSIDE, "outside"},
-        {RE_XRF_JTABLE, "jtable"},
+        {RE_XRF_CODE, "code"},     {RE_XRF_IMPORT, "import"},
+        {RE_XRF_EXPORT, "export"}, {RE_XRF_STRING, "string"},
+        {RE_XRF_DATA, "data"},     {RE_XRF_OUTSIDE, "outside"},
+        {RE_XRF_JTABLE, "jtable"}, {RE_XRF_GLOBAL_SLOT, "global_slot"},
     };
     re_jw_key(w, "flags");
     re_jw_arr(w);
