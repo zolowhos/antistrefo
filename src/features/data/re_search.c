@@ -74,6 +74,7 @@ static void add_hit(re_arena_t *a, re_search_t *out, uint64_t off, const uint8_t
     h.off = off;
     h.rva = 0;
     h.has_rva = false;
+    h.wide = false;
     h.text = re_strn(NULL, 0);
     re_strbuf_t sb;
     re_strbuf_init(&sb, a);
@@ -131,7 +132,7 @@ static bool is_word_byte(uint8_t c) {
            c == '.' || c == '@' || c == '?' || c == '$' || c == ':';
 }
 
-static void add_text_hit(re_arena_t *a, re_search_t *out, uint64_t off, re_str_t text) {
+static void add_text_hit(re_arena_t *a, re_search_t *out, uint64_t off, re_str_t text, bool wide) {
     out->total++;
     if (RE_VEC_LEN(&out->hits) >= RE_SEARCH_MAX_HITS) {
         out->more = true;
@@ -141,6 +142,7 @@ static void add_text_hit(re_arena_t *a, re_search_t *out, uint64_t off, re_str_t
     h.off = off;
     h.rva = 0;
     h.has_rva = false;
+    h.wide = wide;
     h.text = re_strn(re_arena_strndup(a, text.p, text.n), text.n);
     RE_VEC_PUSH(&out->hits, a, h);
 }
@@ -182,7 +184,7 @@ static void scan_narrow(re_span_t img, re_str_t pat, re_rx_t *rx, bool ci, size_
             re_str_t win = re_strn((const char *)img.p + i, img.n - i);
             size_t en = 0;
             if (re_rx_match_at(rx, win, 0, &en))
-                add_text_hit(a, out, i, re_strn(pat.p, pat.n));
+                add_text_hit(a, out, i, re_strn(pat.p, pat.n), false);
             continue;
         }
         if (i + pat.n > img.n)
@@ -190,7 +192,7 @@ static void scan_narrow(re_span_t img, re_str_t pat, re_rx_t *rx, bool ci, size_
         re_str_t win = re_strn((const char *)img.p + i, pat.n);
         if (!str_eq_ci(win, pat, ci))
             continue;
-        add_text_hit(a, out, i, win);
+        add_text_hit(a, out, i, win, false);
         i += pat.n - 1;
     }
 }
@@ -210,13 +212,13 @@ static bool scan_wide_run(re_arena_t *a, re_search_t *out, const uint8_t *img, s
         re_str_t view = re_strn(narrow, chars);
         size_t en = 0;
         if (re_rx_match_at(rx, view, 0, &en))
-            add_text_hit(a, out, i, view);
+            add_text_hit(a, out, i, view, true);
         return true;
     }
     for (size_t k = 0; k + pat.n <= chars; k++) {
         if (!str_eq_ci(re_strn(narrow + k, pat.n), pat, ci))
             continue;
-        add_text_hit(a, out, i + k * 2, re_strn(narrow + k, pat.n));
+        add_text_hit(a, out, i + k * 2, re_strn(narrow + k, pat.n), true);
         break;
     }
     return true;
@@ -308,6 +310,6 @@ void re_search_signature(re_span_t img, re_str_t pat, size_t offset, size_t limi
         bool left_ok = i == 0 || !is_word_byte(img.p[i - 1]);
         bool right_ok = (i + pat.n >= img.n) || !is_word_byte(img.p[i + pat.n]);
         if (left_ok && right_ok)
-            add_text_hit(a, out, i, win);
+            add_text_hit(a, out, i, win, false);
     }
 }

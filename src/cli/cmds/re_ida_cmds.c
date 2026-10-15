@@ -216,7 +216,10 @@ int re_cmd_execute_query(re_ctx_t *ctx, const char *path, int argc, char **argv)
     re_strbuf_init(&out, ctx->arena);
     err.code = RE_OK;
     ok = re_mcp_query_run(ctx->arena, db_path, op, arg, ctx->len, ctx->off, ctx->off, has_len,
-                          has_off && !has_rva, has_rva, regex, ctx->limit, ctx->offset, &out, &err);
+                          has_off && !has_rva, has_rva, regex, ctx->limit, ctx->offset,
+                          ctx->context, ctx->exports_path.n ? ctx->exports_path.p : NULL,
+                          ctx->names_path.n ? ctx->names_path.p : NULL,
+                          ctx->order_path.n ? ctx->order_path.p : NULL, &out, &err);
     if (!ok) {
         write_raw(ctx, out.p, out.len);
         if (ctx->err && err.code != RE_OK)

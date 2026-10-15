@@ -45,7 +45,11 @@ static re_err_code_t load(re_loaded_t *l, re_ctx_t *ctx, const char *path, bool 
     }
     l->img = l->file.whole;
     l->fmt = re_format_detect(l->img);
+    // A file offset does not need a parsed image. RVA still does, so only a
+    // caller that requires a PE refuses an unrecognized file here.
     if (l->fmt == RE_FMT_UNKNOWN) {
+        if (!need_pe)
+            return RE_OK;
         RE_ERR_SETF(ctx->err, RE_E_NOTBIN, "%s is not a recognized binary", path);
         return RE_E_NOTBIN;
     }

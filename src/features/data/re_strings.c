@@ -39,26 +39,50 @@ static void push_hit(re_arena_t *a, re_vec_t *v, uint64_t off, const char *p, si
     RE_VEC_PUSH(v, a, h);
 }
 
-// Scan ASCII runs. A run must be followed by a non printable byte or the end of
-// the file, so a string that runs to the end is still reported but the caller
-// can see it had no terminator.
-static void scan_ascii(re_span_t img, size_t min_len, size_t max, re_arena_t *a, re_strings_t *s) {
-    size_t i = 0;
-    uint64_t total = 0;
-    while (i < img.n) {
-        if (!is_print(img.p[i])) {
-            i++;
+// Next ASCII run at or after *i. A run may end at the file, with no terminator.
+static bool next_ascii(re_span_t img, size_t *i, size_t min_len, size_t *start, size_t *n) {
+    while (*i < img.n) {
+        if (!is_print(img.p[*i])) {
+            (*i)++;
             continue;
         }
-        size_t start = i;
-        while (i < img.n && is_print(img.p[i]))
-            i++;
-        size_t n = i - start;
-        if (n < min_len)
+        *start = *i;
+        while (*i < img.n && is_print(img.p[*i]))
+            (*i)++;
+        *n = *i - *start;
+        if (*n >= min_len)
+            return true;
+    }
+    return false;
+}
+
+static bool next_wide(re_span_t img, size_t *i, size_t min_len, size_t *start, size_t *chars) {
+    while (*i + 1 < img.n) {
+        if (!is_print(img.p[*i]) || img.p[*i + 1] != 0) {
+            (*i)++;
             continue;
+        }
+        *start = *i;
+        *chars = 0;
+        while (*i + 1 < img.n && is_print(img.p[*i]) && img.p[*i + 1] == 0) {
+            (*chars)++;
+            *i += 2;
+        }
+        if (*chars >= min_len)
+            return true;
+    }
+    return false;
+}
+
+static void scan_ascii(re_span_t img, size_t min_len, size_t max, re_arena_t *a, re_strings_t *s) {
+    size_t i = 0;
+    size_t start = 0;
+    size_t n = 0;
+    uint64_t total = 0;
+    while (next_ascii(img, &i, min_len, &start, &n)) {
         total++;
         if (max && total > max)
-            return;
+            continue;
         push_hit(a, &s->hits, start, (const char *)img.p + start, n, false);
     }
     s->ascii_count = total;
@@ -66,29 +90,25 @@ static void scan_ascii(re_span_t img, size_t min_len, size_t max, re_arena_t *a,
 
 static void scan_wide(re_span_t img, size_t min_len, size_t max, re_arena_t *a, re_strings_t *s) {
     size_t i = 0;
+    size_t start = 0;
+    size_t chars = 0;
     uint64_t total = 0;
-    while (i + 1 < img.n) {
-        if (!is_print(img.p[i]) || img.p[i + 1] != 0) {
-            i++;
-            continue;
-        }
-        size_t start = i;
-        while (i + 1 < img.n && is_print(img.p[i]) && img.p[i + 1] == 0)
-            i += 2;
-        size_t n = (i - start) / 2;
-        if (n < min_len)
-            continue;
+    while (next_wide(img, &i, min_len, &start, &chars)) {
+        char *narrow;
+        size_t k;
         total++;
         if (max && total > max)
-            return;
+            continue;
         // Narrow to the low bytes so downstream comparison and regex work on
         // one representation regardless of the source encoding.
-        char *narrow = (char *)re_arena_alloc(a, n);
-        if (!narrow)
+        narrow = (char *)re_arena_alloc(a, chars);
+        if (!narrow) {
+            s->wide_count = total;
             return;
-        for (size_t k = 0; k < n; k++)
+        }
+        for (k = 0; k < chars; k++)
             narrow[k] = (char)img.p[start + k * 2];
-        push_hit(a, &s->hits, start, narrow, n, true);
+        push_hit(a, &s->hits, start, narrow, chars, true);
     }
     s->wide_count = total;
 }
@@ -199,6 +219,74 @@ void re_strings_pdb(re_span_t img, re_arena_t *a, re_strings_t *out) {
         out->pdb_off = i;
         return;
     }
+}
+
+void re_str_page_init(re_str_page_t *p) {
+    re_vec_init(&p->hits, sizeof(re_str_hit_t));
+    p->total = 0;
+    p->truncated = false;
+}
+
+static size_t store_cap(size_t limit) {
+    size_t cap = limit ? limit : (size_t)RE_STR_HITS_MAX;
+    if (cap > (size_t)RE_STR_HITS_MAX)
+        cap = (size_t)RE_STR_HITS_MAX;
+    return cap;
+}
+
+static void consider(re_arena_t *a, re_str_page_t *page, re_rx_t *rx, size_t offset, size_t cap,
+                     uint64_t off, const char *p, size_t n, bool wide) {
+    size_t st = 0;
+    size_t en = 0;
+    char *copy;
+    re_str_hit_t h;
+    if (n == 0)
+        return;
+    if (rx && !re_rx_search(rx, re_strn(p, n), &st, &en))
+        return;
+    if (page->total++ < offset)
+        return;
+    if (RE_VEC_LEN(&page->hits) >= cap)
+        return;
+    copy = re_arena_strndup(a, p, n);
+    if (!copy)
+        return;
+    h.off = off;
+    h.wide = wide;
+    h.text = re_strn(copy, n);
+    RE_VEC_PUSH(&page->hits, a, h);
+}
+
+static void consider_wide(re_arena_t *a, re_str_page_t *page, re_rx_t *rx, size_t offset,
+                          size_t cap, re_span_t img, size_t start, size_t chars) {
+    char stack[512];
+    char *narrow = stack;
+    char *owned = NULL;
+    size_t k;
+    if (chars > sizeof(stack)) {
+        owned = (char *)re_arena_alloc(a, chars);
+        if (!owned)
+            return;
+        narrow = owned;
+    }
+    for (k = 0; k < chars; k++)
+        narrow[k] = (char)img.p[start + k * 2];
+    consider(a, page, rx, offset, cap, start, narrow, chars, true);
+}
+
+void re_strings_collect(re_span_t img, size_t min_len, re_rx_t *rx, size_t offset, size_t limit,
+                        re_arena_t *a, re_str_page_t *out) {
+    size_t cap = store_cap(limit);
+    size_t i = 0;
+    size_t start = 0;
+    size_t n = 0;
+    re_str_page_init(out);
+    while (next_ascii(img, &i, min_len, &start, &n))
+        consider(a, out, rx, offset, cap, start, (const char *)img.p + start, n, false);
+    i = 0;
+    while (next_wide(img, &i, min_len, &start, &n))
+        consider_wide(a, out, rx, offset, cap, img, start, n);
+    out->truncated = offset + RE_VEC_LEN(&out->hits) < out->total;
 }
 
 // Apply a regex filter, honouring offset and limit, and report how many hits

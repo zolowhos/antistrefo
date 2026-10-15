@@ -3,6 +3,7 @@
 // Owns: correctness checks for re_search, re_demangle, re_time and re_entropy.
 // Depends: re_core and re_utils. Prints to stdout, which is fine for a test binary.
 #include "features/data/re_search.h"
+#include "features/data/re_strings.h"
 #include "features/lib/re_demangle.h"
 #include "features/lib/re_demangle_rtti.h"
 #include "utils/sys/re_entropy.h"
@@ -36,9 +37,6 @@ static void test_time(void) {
     RE_CHECK_EQ_U(re_time_year(1767225600), 2026);
 }
 
-// The haystack the search tests run against, plus the offsets of the pieces they
-// look for. Built in pieces so every expected offset is exact rather than hand
-// counted, and no hex escape can swallow the bytes after it.
 typedef struct {
     re_span_t img;
     size_t pattern;
@@ -144,8 +142,6 @@ static void check_offsets_distinct(const re_search_t *s) {
     }
 }
 
-// Text search must find both the ascii copy and the narrowed utf-16 copy, and a
-// regex must also see through the wide copy.
 static void test_search_text(re_arena_t *a, const hay_t *h) {
     re_search_t s;
     re_search_init(&s);
@@ -164,16 +160,12 @@ static void test_search_text(re_arena_t *a, const hay_t *h) {
     re_search_text(h->img, re_str("NEE.LE"), true, false, false, 0, 0, a, &s);
     RE_CHECK_EQ_U(s.total, 2);
     check_offsets_distinct(&s);
-    // A one letter pattern over a wide run is where the duplication showed up,
-    // because every other byte of the run looked like a fresh run start.
     re_search_init(&s);
     re_search_text(h->img, re_str("E"), false, false, false, 0, 0, a, &s);
     check_offsets_distinct(&s);
     RE_CHECK_EQ_U(RE_VEC_LEN(&s.hits), s.total);
 }
 
-// A signature style search must not match inside a longer word, so the standalone
-// main is a hit while the one inside domain is a miss.
 static void test_search_signature(re_arena_t *a, const hay_t *h) {
     re_search_t s;
     re_search_init(&s);
@@ -187,8 +179,6 @@ static void test_search_signature(re_arena_t *a, const hay_t *h) {
     RE_CHECK_EQ_U(s.total, 0);
 }
 
-// The limit caps what is kept and the scan stops there, so total is a floor and
-// more has to say so. A limited search must never look complete when it is not.
 static void test_search_limit(re_arena_t *a, const hay_t *h) {
     re_search_t s;
     re_search_init(&s);
@@ -415,10 +405,8 @@ static void test_entropy(void) {
     RE_CHECK_EQ_U((uint64_t)re_entropy(re_span_none()), 0);
 }
 
-// The class names an image's RTTI carries are not function symbols, and reading them
-// as one fails, which left every C++ class in a binary reported under its raw
-// mangling. A template's descriptor names a member instead of the class, and that
-// inner text is a symbol in its own right.
+// RTTI descriptors are class names, not function symbols. Reading them as symbols
+// left every C++ class reported under its raw mangling.
 static void test_rtti_names(void) {
     re_arena_t a;
     re_str_t out;
@@ -434,15 +422,12 @@ static void test_rtti_names(void) {
     // mangling it was meant to replace.
     RE_CHECK(RTTI(".?AVstd@@vector@@"));
     RE_CHECK_EQ_STR(out.p, "std::vector");
-    // A template descriptor's inner text may be a whole mangled member, and then it is
-    // demangled as one. When it is not a symbol at all it stays as written, because
-    // stripping it to a name would be inventing one.
+    // A template's inner text is demangled when it is a symbol, and kept when it is not.
     RE_CHECK(RTTI(".?AVfoo@H@1@YAXZ@@"));
     RE_CHECK_EQ_STR(out.p, "foo@H@1@YAXZ");
     RE_CHECK(RTTI(".?AV?func@@YAXXZ@@"));
     RE_CHECK_EQ_STR(out.p, "func()");
-    // Refused rather than guessed: not a descriptor, no closing scope, or a kind that
-    // introduces a base class descriptor instead of a type.
+    // Refused: not a descriptor, no closing scope, or a base-class descriptor kind.
     RE_CHECK(!RTTI("main"));
     RE_CHECK(!RTTI(".?AVno_closing@@x"));
     RE_CHECK(!RTTI(".?BAa_base_class_descriptor@@"));
@@ -453,11 +438,61 @@ static void test_rtti_names(void) {
     re_arena_free(&a);
 }
 
+static void test_string_runs(void) {
+    re_arena_t a;
+    re_str_page_t page;
+    re_str_around_t ar;
+    re_rx_t *rx;
+    uint8_t ascii[18];
+    uint8_t wide[40];
+    const re_str_hit_t *h;
+    size_t i;
+    re_arena_init(&a, 0);
+    memset(ascii, 0, sizeof(ascii));
+    memcpy(ascii, "alpha", 5);
+    memcpy(ascii + 6, "betaX", 5);
+    memcpy(ascii + 12, "gamma", 5);
+    rx = re_rx_compile(&a, "gamma", NULL, NULL);
+    re_strings_collect(re_span(ascii, 17), 4, rx, 0, 1, &a, &page);
+    RE_CHECK_EQ_U(page.total, 1);
+    RE_CHECK_EQ_U(RE_VEC_LEN(&page.hits), 1);
+    h = RE_VEC_PTR(&page.hits, re_str_hit_t, 0);
+    RE_CHECK_EQ_STR(h->text.p, "gamma");
+    re_str_around(re_span(ascii, 17), 6, false, 4, 1, &a, &ar);
+    RE_CHECK(ar.found);
+    RE_CHECK_EQ_STR(ar.run.text.p, "betaX");
+    RE_CHECK_EQ_U(RE_VEC_LEN(&ar.before), 1);
+    RE_CHECK_EQ_U(RE_VEC_LEN(&ar.after), 1);
+    h = RE_VEC_PTR(&ar.before, re_str_hit_t, 0);
+    RE_CHECK_EQ_STR(h->text.p, "alpha");
+    h = RE_VEC_PTR(&ar.after, re_str_hit_t, 0);
+    RE_CHECK_EQ_STR(h->text.p, "gamma");
+    memset(wide, 0, sizeof(wide));
+    memcpy(wide, "AAAA", 4);
+    for (i = 0; i < 4; i++)
+        wide[6 + i * 2] = (uint8_t)"JUMP"[i];
+    for (i = 0; i < 5; i++)
+        wide[16 + i * 2] = (uint8_t)"HELLO"[i];
+    for (i = 0; i < 5; i++)
+        wide[28 + i * 2] = (uint8_t)"WORLD"[i];
+    re_str_around(re_span(wide, 38), 18, true, 4, 1, &a, &ar);
+    RE_CHECK(ar.found);
+    RE_CHECK(ar.run.wide);
+    RE_CHECK_EQ_STR(ar.run.text.p, "HELLO");
+    h = RE_VEC_PTR(&ar.before, re_str_hit_t, 0);
+    RE_CHECK(h->wide);
+    RE_CHECK_EQ_STR(h->text.p, "JUMP");
+    h = RE_VEC_PTR(&ar.after, re_str_hit_t, 0);
+    RE_CHECK_EQ_STR(h->text.p, "WORLD");
+    re_arena_free(&a);
+}
+
 int re_test_features(void) {
     test_time();
     test_search();
     test_demangle();
     test_rtti_names();
     test_entropy();
+    test_string_runs();
     return 0;
 }

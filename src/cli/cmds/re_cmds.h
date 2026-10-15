@@ -16,6 +16,7 @@ int re_cmd_imports(re_ctx_t *ctx, const char *path, int argc, char **argv);
 int re_cmd_exports(re_ctx_t *ctx, const char *path, int argc, char **argv);
 int re_cmd_strings(re_ctx_t *ctx, const char *path, int argc, char **argv);
 int re_cmd_vtables(re_ctx_t *ctx, const char *path, int argc, char **argv);
+int re_cmd_namerefs(re_ctx_t *ctx, const char *path, int argc, char **argv);
 int re_cmd_hexdump(re_ctx_t *ctx, const char *path, int argc, char **argv);
 int re_cmd_search(re_ctx_t *ctx, const char *path, int argc, char **argv);
 int re_cmd_demangle(re_ctx_t *ctx, const char *path, int argc, char **argv);

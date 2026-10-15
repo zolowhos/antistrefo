@@ -33,11 +33,15 @@ typedef struct re_ctx {
     re_out_fmt_t out;
     size_t limit; // default 200, the agent context guard
     size_t offset;
+    size_t context; // neighbor strings on each side, 0 when not asked
     uint64_t off;   // hexdump offset
     uint64_t len;   // hexdump length
     re_str_t regex; // empty when no filter was given
     bool has_regex;
-    bool no_color; // --no-color, which also honours the NO_COLOR convention
+    re_str_t exports_path; // namerefs provider image, empty when unused
+    re_str_t names_path;   // namerefs name list, empty when unused
+    re_str_t order_path;   // namerefs canonical order, empty when unused
+    bool no_color;         // --no-color, which also honours the NO_COLOR convention
     // Where a command writes its response. NULL means stdout, which is every case
     // except the MCP server: it points at a temporary file so the bytes can be
     // handed back as structured content instead of going to the client as text.

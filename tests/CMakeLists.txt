@@ -254,6 +254,17 @@ if(MSVC)
 endif()
 add_test(NAME names COMMAND re_test_names)
 
+# Ordered loads of an exact name list. The sequence, a shared export address, and
+# a hole that is not one contiguous gap are each pinned on a synthetic image.
+add_executable(re_test_nameref test_nameref.c)
+target_link_libraries(re_test_nameref PRIVATE re_core re_utils re_flags)
+if(MSVC)
+    set_property(TARGET re_test_nameref
+        PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_definitions(re_test_nameref PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+add_test(NAME nameref COMMAND re_test_nameref)
+
 # User renames in a .alt sidecar: round-trip the file format and prove the name
 # lands on the function table the GUI and decompiler read.
 add_executable(re_test_alt test_alt.c)
