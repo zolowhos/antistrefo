@@ -25,18 +25,12 @@ static void emit_flags(re_jw_t *w, uint32_t flags) {
         uint32_t bit;
         const char *name;
     } kNames[] = {
-        {RE_FUNC_ENTRY, "entry"},
-        {RE_FUNC_EXPORT, "export"},
-        {RE_FUNC_PROLOGUE, "prologue"},
-        {RE_FUNC_FLIRT, "flirt"},
-        {RE_FUNC_THUNK, "thunk"},
-        {RE_FUNC_NORETURN, "noreturn"},
-        {RE_FUNC_OVERLAP, "overlap"},
-        {RE_FUNC_EXTERNAL, "calls_outside"},
-        {RE_FUNC_JTABLE, "indirect_jump"},
-        {RE_FUNC_RET, "returns"},
-        {RE_FUNC_UNWIND, "unwind"},
-        {RE_FUNC_JUNK, "junk"},
+        {RE_FUNC_ENTRY, "entry"},          {RE_FUNC_EXPORT, "export"},
+        {RE_FUNC_PROLOGUE, "prologue"},    {RE_FUNC_FLIRT, "flirt"},
+        {RE_FUNC_THUNK, "thunk"},          {RE_FUNC_NORETURN, "noreturn"},
+        {RE_FUNC_OVERLAP, "overlap"},      {RE_FUNC_EXTERNAL, "calls_outside"},
+        {RE_FUNC_JTABLE, "indirect_jump"}, {RE_FUNC_RET, "returns"},
+        {RE_FUNC_UNWIND, "unwind"},        {RE_FUNC_JUNK, "junk"},
         {RE_FUNC_TRUNC, "trunc"},
     };
     re_jw_key(w, "flags");
