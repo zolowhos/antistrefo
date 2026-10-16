@@ -95,6 +95,20 @@ add_test(NAME agent_feedback
         -DWORK=${CMAKE_CURRENT_BINARY_DIR}/re_agent_feedback.sys
         -P ${CMAKE_CURRENT_SOURCE_DIR}/run_agent_feedback.cmake)
 
+# Imm search must report truncated:true when --limit caps a page with more hits.
+add_executable(re_emit_imm_page emit_imm_page.c)
+if(MSVC)
+    set_property(TARGET re_emit_imm_page
+        PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_definitions(re_emit_imm_page PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+add_test(NAME imm_truncated
+    COMMAND ${CMAKE_COMMAND}
+        -DANTISTREFO=$<TARGET_FILE:antistrefo>
+        -DEMITTER=$<TARGET_FILE:re_emit_imm_page>
+        -DWORK=${CMAKE_CURRENT_BINARY_DIR}/re_imm_page.sys
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/run_imm_truncated.cmake)
+
 # The control flow suite is separate because a graph that collapses to one block is
 # the kind of regression that every other suite happily passes, so it gets its own
 # binary and a hand assembled fixture whose every edge is known in advance.

@@ -237,8 +237,10 @@ static void emit_hits(re_ctx_t *ctx, re_span_t img, re_format_t fmt, const re_pe
         shown++;
     }
     re_jw_arr_end(&w);
+    // Imm pages through page_imm_hits first; truncated must still follow s->more
+    // so a full page is not reported as complete when more matches remain.
     re_jw_ku64(&w, "total", filter_imm ? shown : s->total);
-    re_jw_kbool(&w, "truncated", filter_imm ? false : s->more);
+    re_jw_kbool(&w, "truncated", s->more);
     re_jw_obj_end(&w);
     re_jw_flush(&w, re_ctx_out(ctx));
 }
