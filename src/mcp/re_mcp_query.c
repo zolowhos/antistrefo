@@ -197,6 +197,8 @@ const char *re_mcp_query_reference(const char *query) {
         "executable hits also include insn_va and insn_text (opcode-aligned).\n"
         "Hits whose covering insn does not carry v as imm or disp are dropped.\n"
         "When the hit lands mid-immediate, mid_imm=true and insn_va is the opcode.\n"
+        "offset/limit page every kind the same way; truncated is true when more\n"
+        "matches remain beyond the page (imm: is not exempt).\n"
         "Example imm32: imm:00000148 or imm:0x148 (multi-width still applies).\n";
     static const char kDisasm[] =
         "Disasm: op=disasm addr=<ea> [len=N]. Emits func_va/func_rva/func_size/func_end\n"
