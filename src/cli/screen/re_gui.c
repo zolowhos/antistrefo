@@ -108,7 +108,7 @@ static bool ensure_funcs(gui_t *g, re_arena_t *a, re_gui_funcs_t *list) {
     list->n = 0;
     re_gui_funcs_fill(list, a, &g->an);
     snprintf(msg, sizeof(msg), "recovered %zu functions%s", RE_VEC_LEN(&g->an.scan.funcs),
-             g->an.scan.truncated ? " (capped)" : "");
+             g->an.scan.truncated ? " (stopped: out of memory)" : "");
     re_console_push(&g->console, msg);
     return true;
 }

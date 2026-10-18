@@ -20,7 +20,7 @@ typedef struct {
     re_vec_t *queue; // uint64_t, candidate function starts still to walk
     re_vec_t *out;   // re_func_t
     re_vec_t blocks; // uint64_t, pending block VAs for the current function
-    bool truncated;  // hit RE_FUNC_MAX or a push failed
+    bool truncated;  // an arena push failed (OOM); stop seeding further
 } walk_t;
 
 // Append one address to a vector, through the arena the walk was given.
