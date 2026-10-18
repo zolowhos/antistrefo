@@ -35,6 +35,10 @@ extern "C" {
 
 #define RE_FUNC_MAX_INSNS 4096u
 
+// Global edge cap across the whole image. Without this, a large game DLL's
+// RIP-relative data refs alone can retain hundreds of MB of edge records.
+#define RE_EDGE_MAX 2000000u
+
 // The evidence tag a seed writes into re_func_t::module. A name inferred from a
 // structure in the image is weaker than a name the image states about itself, and
 // this is how a later pass tells the two apart before it decides to keep one.

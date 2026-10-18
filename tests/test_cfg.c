@@ -165,6 +165,7 @@ static void check_analysis(void) {
     fclose(fh);
     re_arena_init(&a, 1u << 20);
     RE_CHECK(re_analysis_open(&an, &a, kTmp));
+    RE_CHECK(re_analysis_run_all(&an));
     RE_CHECK(an.ok);
     RE_CHECK(an.has_pe);
     RE_CHECK(an.has_code);

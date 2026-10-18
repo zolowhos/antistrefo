@@ -29,13 +29,16 @@ bool re_str_is_dynamic(re_str_t s) {
     return false;
 }
 
+// ASCII hits view the mapped image directly: copying every printable run into the
+// arena doubled RSS on large PEs and is never required because the file mapping
+// outlives the analysis context. Wide hits pass an already-narrowed arena buffer.
 static void push_hit(re_arena_t *a, re_vec_t *v, uint64_t off, const char *p, size_t n, bool wide) {
+    re_str_hit_t h;
     if (n == 0 || RE_VEC_LEN(v) >= RE_STR_HITS_MAX)
         return;
-    re_str_hit_t h;
     h.off = off;
     h.wide = wide;
-    h.text = re_strn(re_arena_strndup(a, p, n), n);
+    h.text = re_strn(p, n);
     RE_VEC_PUSH(v, a, h);
 }
 

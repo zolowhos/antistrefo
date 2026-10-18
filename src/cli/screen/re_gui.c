@@ -193,7 +193,11 @@ static bool load_file(gui_t *g, re_arena_t *a, re_gui_funcs_t *list, re_gui_pseu
     }
     re_arena_free(&g->fana);
     re_arena_init(&g->fana, 1u << 23);
-    if (!re_analysis_open(&g->an, &g->fana, path)) {
+    // Map + parse only, then recover functions. Heavy passes (xrefs, regions,
+    // full string tables, score) stay demand-driven so a ~200MB PE is usable
+    // without retaining multi-GB analysis structures on idle load.
+    if (!re_analysis_open(&g->an, &g->fana, path) || !re_analysis_ensure(&g->an, RE_PASS_SYMBOLS)) {
+        re_analysis_close(&g->an);
         g->loaded = false;
         re_mcp_live_clear_file();
         return false;

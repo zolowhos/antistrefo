@@ -152,10 +152,15 @@ int re_cmd_analyze(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     // asked about. A stale cache would answer about the wrong binary, which is worse
     // than doing the work again.
     if (ctx->session && re_str_eq_cstr(ctx->session->path, path)) {
-        an = ctx->session;
-        reused = true;
+        if (re_analysis_run_all(ctx->session)) {
+            an = ctx->session;
+            reused = true;
+        }
     } else if (re_analysis_open(&local, a, path)) {
-        an = &local;
+        if (re_analysis_run_all(&local))
+            an = &local;
+        else
+            re_analysis_close(&local);
     }
     if (!an) {
         RE_ERR_SETF(ctx->err, RE_E_NOTBIN, "%s is not a recognized binary", path);

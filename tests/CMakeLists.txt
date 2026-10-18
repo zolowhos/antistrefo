@@ -376,3 +376,13 @@ if(MSVC)
     target_compile_definitions(re_test_pe PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
 add_test(NAME pe COMMAND re_test_pe)
+
+# Large sparse PE: map+idle open must not retain a second full-file arena copy.
+add_executable(re_test_large_mem test_large_mem.c)
+target_link_libraries(re_test_large_mem PRIVATE re_core re_utils re_flags)
+if(MSVC)
+    set_property(TARGET re_test_large_mem
+        PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_definitions(re_test_large_mem PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+add_test(NAME large_mem COMMAND re_test_large_mem)

@@ -92,7 +92,7 @@ int re_render_analyze(re_ctx_t *ctx, const char *path) {
     re_strbuf_t subj;
     re_strbuf_t sum;
     const char *tabs[1] = {"analysis"};
-    if (!re_analysis_open(&an, ctx->arena, path)) {
+    if (!re_analysis_open(&an, ctx->arena, path) || !re_analysis_run_all(&an)) {
         RE_ERR_SETF(ctx->err, RE_E_NOTBIN, "%s is not a recognized binary", path);
         re_analysis_close(&an);
         return re_err_exit_code(ctx->err->code);

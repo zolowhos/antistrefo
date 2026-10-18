@@ -38,6 +38,10 @@ typedef enum {
 #define RE_REG_CONF_MED 2u
 #define RE_REG_CONF_HIGH 3u
 
+// Hard cap on classified windows. A 200MB SizeOfImage at 4KiB is ~50k windows;
+// without a cap a corrupt or sparse SizeOfImage can request millions of records.
+#define RE_REGIONS_MAX 65536u
+
 typedef struct {
     uint64_t va;
     uint32_t rva;

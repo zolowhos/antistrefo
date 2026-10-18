@@ -89,6 +89,9 @@ size_t re_xref_out_of(const re_xrefset_t *s, re_arena_t *a, uint64_t va, uint64_
 // as one to the entry.
 size_t re_xref_into(const re_xrefset_t *s, re_arena_t *a, uint64_t va, uint64_t size, size_t max,
                     re_vec_t *out);
+
+// How many refs target [va, va+size), without allocating. max 0 means unbounded.
+size_t re_xref_into_count(const re_xrefset_t *s, uint64_t va, uint64_t size, size_t max);
 #ifdef __cplusplus
 }
 #endif
