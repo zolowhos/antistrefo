@@ -35,6 +35,10 @@ extern "C" {
 
 #define RE_FUNC_MAX_INSNS 4096u
 
+// Global function cap. A dense 185MB .text can invent hundreds of thousands of
+// prologue hits; without a cap the function table alone retains multi-GB.
+#define RE_FUNC_MAX 250000u
+
 // Global edge cap across the whole image. Without this, a large game DLL's
 // RIP-relative data refs alone can retain hundreds of MB of edge records.
 #define RE_EDGE_MAX 2000000u
@@ -83,6 +87,7 @@ typedef struct {
 typedef struct {
     re_vec_t funcs; // re_func_t
     re_vec_t edges; // re_edge_t, the raw control flow the walk saw
+    bool truncated; // stopped early at RE_FUNC_MAX or an arena push failure
 } re_fscan_t;
 
 // Walk the image. Seeds the entry point and the export table, then follows calls

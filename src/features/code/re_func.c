@@ -5,7 +5,11 @@
 //           with the seeds. A function is reported only if it was walked.
 #include "features/code/re_func.h"
 
+#include "features/code/re_func_priv.h"
+#include "features/code/re_seeds.h"
 #include "features/pe/re_pe.h"
+
+#include <string.h>
 
 // Declared here because the scan sorts its table and then applies the names the image
 // states; the body sits below the walk it serves, next to the sort it depends on.
@@ -14,10 +18,24 @@ static void name_exports(const re_pe_t *pe, re_fscan_t *out);
 void re_fscan_init(re_fscan_t *s) {
     re_vec_init(&s->funcs, sizeof(re_func_t));
     re_vec_init(&s->edges, sizeof(re_edge_t));
+    s->truncated = false;
 }
-#include "features/code/re_func_priv.h"
 
-#include "features/code/re_seeds.h"
+// Push one recovered function, or mark the scan truncated when the table is full
+// or the arena cannot grow. Callers must stop seeding once truncated is set.
+static bool push_func(walk_t *w, re_func_t *f) {
+    re_func_t copy;
+    if (w->truncated || RE_VEC_LEN(w->out) >= RE_FUNC_MAX) {
+        w->truncated = true;
+        return false;
+    }
+    copy = *f;
+    if (!RE_VEC_PUSH(w->out, w->a, copy)) {
+        w->truncated = true;
+        return false;
+    }
+    return true;
+}
 
 static int cmp_va(const void *a, const void *b, void *ctx) {
     const re_func_t *x = (const re_func_t *)a;
@@ -36,7 +54,7 @@ static int cmp_va(const void *a, const void *b, void *ctx) {
 // alongside the sweep rather than instead of it.
 static void unwind_pass(walk_t *w) {
     const re_pe_t *pe = w->code->pe;
-    for (size_t i = 0; i < RE_VEC_LEN(&pe->unwind); i++) {
+    for (size_t i = 0; i < RE_VEC_LEN(&pe->unwind) && !w->truncated; i++) {
         const re_pe_unwind_t *u = RE_VEC_PTR(&pe->unwind, re_pe_unwind_t, i);
         uint64_t start = w->code->base + u->begin;
         if (!re_code_in_code(w->code, start) || re_code_covered(w->code, start, 1))
@@ -50,7 +68,7 @@ static void unwind_pass(walk_t *w) {
         // early, so the declared end wins over the walked one.
         if (u->end > u->begin && f.rva + f.size < u->end)
             f.size = u->end - u->begin;
-        RE_VEC_PUSH(w->out, w->a, f);
+        push_func(w, &f);
     }
 }
 
@@ -61,9 +79,9 @@ static void unwind_pass(walk_t *w) {
 static void sweep(walk_t *w) {
     uint64_t va = 0;
     uint64_t len = 0;
-    for (uint16_t r = 0; re_code_range(w->code, r, &va, &len); r++) {
+    for (uint16_t r = 0; re_code_range(w->code, r, &va, &len) && !w->truncated; r++) {
         uint64_t end = va + len;
-        for (uint64_t at = va; at < end; at++) {
+        for (uint64_t at = va; at < end && !w->truncated; at++) {
             re_func_t f;
             if (re_code_covered(w->code, at, 1))
                 continue;
@@ -80,7 +98,8 @@ static void sweep(walk_t *w) {
             if (f.n_insns == 0)
                 continue;
             f.flags |= RE_FUNC_PROLOGUE;
-            RE_VEC_PUSH(w->out, w->a, f);
+            if (!push_func(w, &f))
+                return;
             at += f.size ? f.size - 1 : 0;
         }
     }
@@ -169,11 +188,13 @@ void re_func_scan(re_code_t *c, re_arena_t *a, re_fscan_t *out) {
     re_vec_init(&queue, sizeof(uint64_t));
     re_vec_init(&seeds, sizeof(re_seed_t));
     re_vec_init(&irp, sizeof(re_seed_t));
+    memset(&w, 0, sizeof(w));
     w.code = c;
     w.a = a;
     w.edges = &out->edges;
     w.queue = &queue;
     w.out = &out->funcs;
+    re_vec_init(&w.blocks, sizeof(uint64_t));
     if (c->pe->entry_rva)
         re_walk_push(a, &queue, c->base + c->pe->entry_rva);
     for (size_t i = 0; i < RE_VEC_LEN(&c->pe->exports); i++) {
@@ -186,7 +207,7 @@ void re_func_scan(re_code_t *c, re_arena_t *a, re_fscan_t *out) {
     re_seed_collect(c->pe, c, a, &seeds);
     for (size_t i = 0; i < RE_VEC_LEN(&seeds); i++)
         re_walk_push(a, &queue, RE_VEC_AT(&seeds, re_seed_t, i).va);
-    while (cursor < RE_VEC_LEN(&queue)) {
+    while (cursor < RE_VEC_LEN(&queue) && !w.truncated) {
         uint64_t start = *(const uint64_t *)RE_VEC_PTR(&queue, uint64_t, cursor);
         re_func_t f;
         cursor++;
@@ -197,10 +218,11 @@ void re_func_scan(re_code_t *c, re_arena_t *a, re_fscan_t *out) {
             continue;
         if (c->pe->entry_rva && f.rva == c->pe->entry_rva)
             f.flags |= RE_FUNC_ENTRY;
-        RE_VEC_PUSH(&out->funcs, a, f);
+        push_func(&w, &f);
     }
     unwind_pass(&w);
     sweep(&w);
+    out->truncated = w.truncated;
     adopt_unwind(c->pe, &out->funcs);
     re_vec_sort(&out->funcs, cmp_va, NULL);
     mark_record_overlaps(out);
