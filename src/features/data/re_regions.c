@@ -98,17 +98,15 @@ static uint32_t fill_share(re_span_t bytes) {
     return (uint32_t)((fill * 100u) / bytes.n);
 }
 
-// References from anywhere in the image into the region. A region nothing points at
-// and that holds no function is the hardest kind to call, which is exactly why the
-// count is reported: a zero here is information, not an absence of it.
+// References from anywhere in the image into the region. Count only: materialising
+// a hit vector per window allocated O(windows) arena junk on a large SizeOfImage
+// and was the main multi-GB blow-up on open of a ~200MB PE.
 static void tally_refs(const re_xrefset_t *xs, re_arena_t *a, uint64_t va, uint64_t size,
                        re_region_t *r) {
+    (void)a;
     if (!xs)
         return;
-    re_vec_t hits;
-    re_vec_init(&hits, sizeof(uint32_t));
-    re_xref_into(xs, a, va, size, 4096, &hits);
-    r->n_data_refs = (uint32_t)RE_VEC_LEN(&hits);
+    r->n_data_refs = (uint32_t)re_xref_into_count(xs, va, size, 4096);
 }
 
 // How many entries of an ascending address list land in [va, va+size). Used for both
@@ -287,6 +285,10 @@ size_t re_region_scan(re_code_t *c, const re_fscan_t *scan, const re_xrefset_t *
         uint64_t left = end - va;
         uint64_t n = left < (uint64_t)win ? left : (uint64_t)win;
         re_region_t r;
+        if (RE_VEC_LEN(out) >= RE_REGIONS_MAX) {
+            *truncated = true;
+            break;
+        }
         if (!re_region_classify(c, scan, xs, pe, &ev, va, n, &r, a))
             break;
         if (!RE_VEC_PUSH(out, a, r)) {

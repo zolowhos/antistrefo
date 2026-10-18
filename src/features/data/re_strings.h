@@ -25,7 +25,7 @@ extern "C" {
 
 typedef struct {
     uint64_t off;
-    re_str_t text; // owned by the caller's arena
+    re_str_t text; // ASCII: view into the mapped image; wide: arena-narrowed bytes
     bool wide;
 } re_str_hit_t;
 

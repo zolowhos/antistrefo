@@ -68,6 +68,7 @@ static void check_apply_and_output(void) {
     long idx;
     re_arena_init(&a, 1 << 20);
     RE_CHECK(re_analysis_open(&an, &a, kBin));
+    RE_CHECK(re_analysis_ensure(&an, RE_PASS_FUNCS));
     idx = re_func_index_of(&an.scan, IMAGE_BASE + TEXT_RVA);
     RE_CHECK(idx >= 0);
     f = re_func_at(&an.scan, (size_t)idx);
@@ -83,6 +84,7 @@ static void check_resolve_by_name(void) {
     uint32_t rva = 0;
     re_arena_init(&a, 1 << 20);
     RE_CHECK(re_analysis_open(&an, &a, kBin));
+    RE_CHECK(re_analysis_ensure(&an, RE_PASS_FUNCS));
     RE_CHECK(re_alt_resolve(&an.scan, &an.pe, re_str("user_entry"), &rva));
     RE_CHECK_EQ_U(rva, TEXT_RVA);
     RE_CHECK(re_alt_resolve(&an.scan, &an.pe, re_str("0x1000"), &rva));

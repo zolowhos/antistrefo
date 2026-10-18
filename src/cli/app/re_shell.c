@@ -163,7 +163,8 @@ static bool session_open(session_t *s, re_ctx_t *ctx, const char *path, const ch
                          re_report_t *r) {
     session_drop(s);
     re_arena_init(&s->arena, 1u << 22);
-    if (!re_analysis_open(&s->an, &s->arena, path)) {
+    if (!re_analysis_open(&s->an, &s->arena, path) || !re_analysis_run_all(&s->an)) {
+        re_analysis_close(&s->an);
         re_arena_free(&s->arena);
         re_report_note(r, RE_ST_BAD, path);
         return false;

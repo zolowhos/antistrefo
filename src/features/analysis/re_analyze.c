@@ -339,18 +339,38 @@ bool re_analysis_open(re_analysis_t *an, re_arena_t *a, const char *path) {
         const char *arch = re_disasm_for_machine(an->pe.machine);
         const re_disasm_t *dis = arch ? re_disasm_find(arch) : NULL;
         an->has_code = re_code_init(&an->code, an->file.whole, &an->pe, dis, a);
+        // Bitset alloc failure is OOM, not "no decoder": refuse rather than limp on.
+        if (!an->has_code && dis && an->pe.valid && an->code.n_code) {
+            re_file_close(&an->file);
+            return false;
+        }
     }
-    for (int i = 0; i < RE_PASS_COUNT; i++)
+    run_pass(an, a, RE_PASS_FORMAT);
+    an->ok = true;
+    return true;
+}
+
+bool re_analysis_ensure(re_analysis_t *an, re_pass_t last) {
+    re_arena_t *a;
+    bool ran_funcs = false;
+    if (!an || !an->ok || !an->arena || last >= RE_PASS_COUNT)
+        return false;
+    a = an->arena;
+    for (int i = 0; i <= (int)last; i++) {
+        if (re_analysis_pass(an, (re_pass_t)i))
+            continue;
         run_pass(an, a, (re_pass_t)i);
-    // Sidecar renames after every pass so the scoreboard is not disturbed and the
-    // GUI / decompiler / live MCP snapshot all see the same display names.
-    if (an->has_code && RE_VEC_LEN(&an->scan.funcs)) {
+        if ((re_pass_t)i == RE_PASS_FUNCS)
+            ran_funcs = true;
+    }
+    // Sidecar renames once the function table is first built so GUI / decompiler /
+    // live MCP all see the same display names without re-scoring.
+    if (ran_funcs && an->has_code && RE_VEC_LEN(&an->scan.funcs) && an->path.n) {
         re_alt_t alt;
         re_alt_init(&alt, a);
-        if (re_alt_load(&alt, path))
+        if (re_alt_load(&alt, an->path.p))
             re_alt_apply(&an->scan, &alt);
     }
-    an->ok = true;
     return true;
 }
 

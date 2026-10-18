@@ -68,8 +68,9 @@ typedef struct {
 } re_pass_stat_t;
 
 // The shared context. One of these per open file: the file stays mapped, the PE
-// stays parsed, and the passes run at most once, so a second command over the same
-// file reads this instead of rediscovering it. That is the whole point of the type.
+// stays parsed, and each pass runs at most once via re_analysis_ensure, so a
+// second command over the same file reads this instead of rediscovering it. Open
+// alone is map+parse; heavy passes stay demand-driven for large images.
 // The tag is named so a context header can forward declare the pointer type without
 // including this one.
 typedef struct re_analysis_s {
@@ -101,11 +102,21 @@ typedef struct re_analysis_s {
 // Zero the context. Nothing is allocated and nothing is mapped yet.
 void re_analysis_init(re_analysis_t *an, re_arena_t *a);
 
-// Open path, run every pass in order over the shared context, and record what each
-// one did. Returns false only when the file could not be opened or is not a
-// recognised binary, which is the one failure with nothing to report. A pass that
-// cannot run leaves the context usable and is recorded as skipped.
+// Map path and parse the PE (format pass only). Does not walk code, scan strings,
+// or build xrefs: those run on demand through re_analysis_ensure so a large image
+// can sit mapped without retaining multi-GB analysis structures. Returns false
+// only when the file could not be opened.
 bool re_analysis_open(re_analysis_t *an, re_arena_t *a, const char *path);
+
+// Run every not-yet-run pass through `last` inclusive, in order. Safe to call
+// repeatedly. Returns false when the context is not open; a pass that skips or
+// hits an internal cap still leaves the context usable and is recorded as such.
+bool re_analysis_ensure(re_analysis_t *an, re_pass_t last);
+
+// Convenience: ensure every pass through the scoreboard has run.
+static inline bool re_analysis_run_all(re_analysis_t *an) {
+    return re_analysis_ensure(an, RE_PASS_SCORE);
+}
 
 // Release the mapping and everything allocated from the arena. The arena itself is
 // the caller's and is not freed here.

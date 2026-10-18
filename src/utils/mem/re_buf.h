@@ -26,8 +26,8 @@ typedef struct {
     re_span_t whole;
     re_span_t path;
     uint64_t size;
-    void *map; // platform handle, NULL when the file was read into the arena
-    uint8_t *heap;
+    void *map;     // platform mapping handle; always set for a successful open
+    uint8_t *heap; // unused: files are mapped, never slurped into a heap copy
 } re_file_t;
 
 static inline re_span_t re_span(const void *p, size_t n) {

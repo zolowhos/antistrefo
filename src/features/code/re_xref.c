@@ -391,6 +391,21 @@ size_t re_xref_out_of(const re_xrefset_t *s, re_arena_t *a, uint64_t va, uint64_
     return n;
 }
 
+size_t re_xref_into_count(const re_xrefset_t *s, uint64_t va, uint64_t size, size_t max) {
+    size_t i = lower_rev(s, va);
+    size_t n = 0;
+    while (i < RE_VEC_LEN(&s->rev)) {
+        uint32_t idx = RE_VEC_AT(&s->rev, uint32_t, i);
+        if (RE_VEC_AT(&s->fwd, re_xref_t, idx).to >= va + size)
+            break;
+        if (max && n >= max)
+            break;
+        i++;
+        n++;
+    }
+    return n;
+}
+
 // rev is sorted by target, so this is the same shape against the other index.
 size_t re_xref_into(const re_xrefset_t *s, re_arena_t *a, uint64_t va, uint64_t size, size_t max,
                     re_vec_t *out) {

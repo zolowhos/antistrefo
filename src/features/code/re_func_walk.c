@@ -31,6 +31,8 @@ void re_walk_push(re_arena_t *a, re_vec_t *v, uint64_t x) {
 static void add_edge(re_arena_t *a, re_vec_t *v, uint64_t from, uint64_t to, uint8_t kind,
                      bool has_to) {
     re_edge_t e;
+    if (RE_VEC_LEN(v) >= RE_EDGE_MAX)
+        return;
     e.from = from;
     e.to = to;
     e.kind = kind;
