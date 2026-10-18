@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "features/analysis/re_analyze.h"
+#include "features/code/re_func.h"
 #include "features/data/re_strings.h"
 #include "utils/mem/re_arena.h"
 #include "utils/mem/re_buf.h"
@@ -165,9 +166,66 @@ static void check_open_idle(void) {
     remove(LARGE_PATH);
 }
 
+// Dense push rbp; ret every two bytes. Without reusing the per-function blocks
+// vector this retained O(n_funcs) abandoned grow-arrays (multi-GB on real DLLs).
+#define DENSE_RAW (2u * 1024u * 1024u)
+#define DENSE_PATH "re_test_dense_funcs.sys"
+
+static int write_dense_pe(const char *path, size_t raw) {
+    uint8_t hdr[0x400];
+    uint8_t chunk[4096];
+    FILE *fh;
+    const uint32_t text_rva = 0x1000u;
+    const uint32_t hdrs = 0x200u;
+    size_t left = raw;
+    size_t i;
+    fill_large_headers(hdr, raw, hdrs, text_rva);
+    for (i = 0; i < sizeof(chunk); i += 2u) {
+        chunk[i] = 0x55u;
+        chunk[i + 1u] = 0xC3u;
+    }
+    fh = fopen(path, "wb");
+    if (!fh)
+        return 0;
+    if (fwrite(hdr, 1, hdrs, fh) != hdrs) {
+        fclose(fh);
+        return 0;
+    }
+    while (left) {
+        size_t n = left < sizeof(chunk) ? left : sizeof(chunk);
+        if (fwrite(chunk, 1, n, fh) != n) {
+            fclose(fh);
+            return 0;
+        }
+        left -= n;
+    }
+    fclose(fh);
+    return 1;
+}
+
+static void check_dense_funcs_bounded(void) {
+    re_arena_t a;
+    re_analysis_t an;
+    size_t after;
+    RE_CHECK(write_dense_pe(DENSE_PATH, DENSE_RAW));
+    re_arena_init(&a, 1u << 20);
+    RE_CHECK(re_analysis_open(&an, &a, DENSE_PATH));
+    RE_CHECK(re_analysis_ensure(&an, RE_PASS_FUNCS));
+    after = a.total;
+    RE_CHECK(RE_VEC_LEN(&an.scan.funcs) <= RE_FUNC_MAX);
+    RE_CHECK(an.scan.truncated);
+    // Cap + reused blocks: well under a second full image, never multi-GB.
+    RE_CHECK(after < 64u * 1024u * 1024u);
+    re_analysis_close(&an);
+    re_arena_free(&a);
+    remove(DENSE_PATH);
+}
+
 int main(void) {
     check_map_no_copy();
     check_open_idle();
+    check_dense_funcs_bounded();
     remove(LARGE_PATH);
+    remove(DENSE_PATH);
     return re_test_report("large_mem");
 }

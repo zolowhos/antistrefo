@@ -68,6 +68,7 @@ static void run_funcs(re_analysis_t *an, re_arena_t *a, re_pass_stat_t *st) {
     }
     re_func_scan(&an->code, a, &an->scan);
     st->count = RE_VEC_LEN(&an->scan.funcs);
+    st->partial = an->scan.truncated;
     finished(st);
 }
 
