@@ -168,7 +168,8 @@ static void check_open_idle(void) {
 
 // Dense push rbp; ret every two bytes. Without reusing the per-function blocks
 // vector this retained O(n_funcs) abandoned grow-arrays (multi-GB on real DLLs).
-#define DENSE_RAW (2u * 1024u * 1024u)
+// Kept modest so CI stays fast; the bound below fails if blocks are abandoned.
+#define DENSE_RAW (512u * 1024u)
 #define DENSE_PATH "re_test_dense_funcs.sys"
 
 static int write_dense_pe(const char *path, size_t raw) {
@@ -207,15 +208,18 @@ static void check_dense_funcs_bounded(void) {
     re_arena_t a;
     re_analysis_t an;
     size_t after;
+    size_t nfuncs;
     RE_CHECK(write_dense_pe(DENSE_PATH, DENSE_RAW));
     re_arena_init(&a, 1u << 20);
     RE_CHECK(re_analysis_open(&an, &a, DENSE_PATH));
     RE_CHECK(re_analysis_ensure(&an, RE_PASS_FUNCS));
     after = a.total;
-    RE_CHECK(RE_VEC_LEN(&an.scan.funcs) <= RE_FUNC_MAX);
-    RE_CHECK(an.scan.truncated);
-    // Cap + reused blocks: well under a second full image, never multi-GB.
-    RE_CHECK(after < 64u * 1024u * 1024u);
+    nfuncs = RE_VEC_LEN(&an.scan.funcs);
+    RE_CHECK(nfuncs > 1000u);
+    RE_CHECK(!an.scan.truncated);
+    // Reused blocks: arena stays near the function table, not O(n) abandoned vecs.
+    // Without reuse, each walk left behind at least an 8-slot (64-byte) buffer.
+    RE_CHECK(after < nfuncs * 256u + DENSE_RAW / 4u);
     re_analysis_close(&an);
     re_arena_free(&a);
     remove(DENSE_PATH);

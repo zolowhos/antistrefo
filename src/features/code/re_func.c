@@ -21,14 +21,12 @@ void re_fscan_init(re_fscan_t *s) {
     s->truncated = false;
 }
 
-// Push one recovered function, or mark the scan truncated when the table is full
-// or the arena cannot grow. Callers must stop seeding once truncated is set.
+// Push one recovered function. No count cap: every walked start is kept. Only an
+// arena failure stops the scan, and that is reported as truncated (OOM).
 static bool push_func(walk_t *w, re_func_t *f) {
     re_func_t copy;
-    if (w->truncated || RE_VEC_LEN(w->out) >= RE_FUNC_MAX) {
-        w->truncated = true;
+    if (w->truncated)
         return false;
-    }
     copy = *f;
     if (!RE_VEC_PUSH(w->out, w->a, copy)) {
         w->truncated = true;
