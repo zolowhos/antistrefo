@@ -12,11 +12,9 @@
 // function that needs more than this is not one the recovery can honestly claim.
 #define RE_JUNK_MAX 16u
 
-// Everything about the body being walked that is not part of its record. The cursor
-// is a position in blocks rather than a pop, because the vector has no remove and a
-// cursor needs none.
+// Everything about the body being walked that is not part of its record. The
+// pending-block list lives on walk_t so its capacity is reused across functions.
 typedef struct {
-    re_vec_t blocks; // uint64_t, addresses still to walk
     size_t cursor;
     uint64_t hi;   // highest address walked, plus the length of what was there
     uint64_t end;  // the compiler's declared end, 0 when it declared none
@@ -169,7 +167,7 @@ static bool other_unwind(const walk_t *w, const re_func_t *f, uint64_t target) {
     return re_pe_unwind_covering(w->code->pe, rva, &u) && w->code->base + u.begin != f->va;
 }
 
-static void take_edge(walk_t *w, fnwalk_t *s, const re_insn_t *in, re_func_t *f) {
+static void take_edge(walk_t *w, const re_insn_t *in, re_func_t *f) {
     uint8_t kind = RE_EDGE_NONE;
     uint64_t target = in->has_target ? in->target : (in->has_mem ? in->mem : 0);
     bool have = in->has_target || in->has_mem;
@@ -215,7 +213,7 @@ static void take_edge(walk_t *w, fnwalk_t *s, const re_insn_t *in, re_func_t *f)
         return;
     }
     if (!re_code_covered(w->code, target, 1))
-        re_walk_push(w->a, other_unwind(w, f, target) ? w->queue : &s->blocks, target);
+        re_walk_push(w->a, other_unwind(w, f, target) ? w->queue : &w->blocks, target);
     // The bytes are claimed and the target is not on a boundary. Inside this
     // function's own body that is a branch into a mis-decoded stretch, which is a
     // decode problem; outside it two records share bytes, which is the overlap
@@ -234,8 +232,10 @@ static void start_func(fnwalk_t *s, walk_t *w, uint64_t start, re_func_t *f) {
     s->hi = start;
     s->halt = 0;
     s->cut = false;
-    re_vec_init(&s->blocks, sizeof(uint64_t));
-    re_walk_push(w->a, &s->blocks, start);
+    // Clear length only: keep the buffer so the next function does not pay for
+    // another grow-array abandoned in the arena.
+    re_vec_clear(&w->blocks);
+    re_walk_push(w->a, &w->blocks, start);
     s->end = declared_end(w, start);
     f->va = start;
     f->dispatch = 0;
@@ -255,6 +255,13 @@ static void start_func(fnwalk_t *s, walk_t *w, uint64_t start, re_func_t *f) {
 
 // One block: decode at va and either record the instruction, skip the bytes that
 // do not decode, or note that the walk could go no further.
+static void enqueue_block(walk_t *w, uint64_t next) {
+    // Already-covered fall-through is common on rejoins; pushing it still grows
+    // the block list and was a major arena cost on large images.
+    if (!re_code_covered(w->code, next, 1))
+        re_walk_push(w->a, &w->blocks, next);
+}
+
 static void walk_block(walk_t *w, fnwalk_t *s, re_func_t *f, uint64_t va) {
     re_insn_t in;
     uint32_t frame = 0;
@@ -270,7 +277,7 @@ static void walk_block(walk_t *w, fnwalk_t *s, re_func_t *f, uint64_t va) {
         if (next > s->hi)
             s->hi = next;
         f->flags |= RE_FUNC_JUNK;
-        re_walk_push(w->a, &s->blocks, next);
+        enqueue_block(w, next);
         return;
     }
     if (re_code_covered(w->code, va, in.size))
@@ -291,25 +298,25 @@ static void walk_block(walk_t *w, fnwalk_t *s, re_func_t *f, uint64_t va) {
     halt = halt_kind(&in);
     if (halt)
         s->halt = va + in.size;
-    take_edge(w, s, &in, f);
+    take_edge(w, &in, f);
     // A declared end beats the first ret. The bytes after it belong to this
     // function until the compiler's end, and stopping here is how a filter
     // that has its own unwind entry gets merged into the parent.
     if (s->end && va + in.size < s->end && halt != 2u)
-        re_walk_push(w->a, &s->blocks, va + in.size);
+        enqueue_block(w, va + in.size);
     else if (!in.is_return && halt != 2u && !(in.is_branch && !in.is_conditional))
-        re_walk_push(w->a, &s->blocks, va + in.size);
+        enqueue_block(w, va + in.size);
 }
 
 // What the record says once the walk is over: its extent, whether it was cut short,
 // whether it is a thunk, and whether it can return at all.
-static void finish_func(fnwalk_t *s, re_func_t *f) {
+static void finish_func(walk_t *w, fnwalk_t *s, re_func_t *f) {
     f->size = (uint32_t)(s->hi - f->va);
     // Truncation is the instruction ceiling and nothing else. Stopping with blocks
     // pending because they lie past the declared end is the walk having finished
     // the function, and calling that truncation marked three quarters of a system
     // image as cut short.
-    if (f->n_insns >= RE_FUNC_MAX_INSNS && s->cursor < RE_VEC_LEN(&s->blocks))
+    if (f->n_insns >= RE_FUNC_MAX_INSNS && s->cursor < RE_VEC_LEN(&w->blocks))
         f->flags |= RE_FUNC_TRUNC;
     // A body that is little more than a jump is a thunk: a jump through the
     // import table, or a tail call the compiler left in place.
@@ -321,16 +328,16 @@ static void finish_func(fnwalk_t *s, re_func_t *f) {
     if (s->halt && s->halt == s->hi && !s->cut &&
         !(f->flags & (RE_FUNC_RET | RE_FUNC_TRUNC | RE_FUNC_JTABLE)))
         f->flags |= RE_FUNC_NORETURN;
-    re_vec_truncate(&s->blocks, 0);
+    re_vec_clear(&w->blocks);
 }
 
 void re_walk_func(walk_t *w, uint64_t start, re_func_t *f) {
     fnwalk_t s;
     start_func(&s, w, start, f);
-    while (s.cursor < RE_VEC_LEN(&s.blocks) && f->n_insns < RE_FUNC_MAX_INSNS) {
-        uint64_t va = *(const uint64_t *)RE_VEC_PTR(&s.blocks, uint64_t, s.cursor);
+    while (s.cursor < RE_VEC_LEN(&w->blocks) && f->n_insns < RE_FUNC_MAX_INSNS) {
+        uint64_t va = *(const uint64_t *)RE_VEC_PTR(&w->blocks, uint64_t, s.cursor);
         s.cursor++;
         walk_block(w, &s, f, va);
     }
-    finish_func(&s, f);
+    finish_func(w, &s, f);
 }

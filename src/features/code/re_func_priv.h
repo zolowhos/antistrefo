@@ -10,13 +10,17 @@
 #include "features/code/re_func.h"
 
 // What a walk needs beyond the function it is filling in: the code map, the arena
-// everything is allocated from, and the two lists it records into.
+// everything is allocated from, and the two lists it records into. `blocks` is
+// reused across every function so each walk does not abandon a grow-array in the
+// arena (that was the multi-GB RSS on large game DLLs).
 typedef struct {
     re_code_t *code;
     re_arena_t *a;
     re_vec_t *edges; // re_edge_t
     re_vec_t *queue; // uint64_t, candidate function starts still to walk
     re_vec_t *out;   // re_func_t
+    re_vec_t blocks; // uint64_t, pending block VAs for the current function
+    bool truncated;  // hit RE_FUNC_MAX or a push failed
 } walk_t;
 
 // Append one address to a vector, through the arena the walk was given.

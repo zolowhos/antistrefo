@@ -42,6 +42,7 @@ typedef struct gui {
     size_t tab;
     bool quit;
     bool want_load;
+    bool want_analyze;
     bool loaded;
     bool fana_ready;
     uint8_t button_zone;
@@ -92,12 +93,38 @@ static void page_scroll(gui_t *g, int down) {
         g->page_off--;
 }
 
+static bool funcs_ready(const gui_t *g) {
+    return g->fana_ready && re_analysis_pass(&g->an, RE_PASS_FUNCS) != NULL;
+}
+
+static bool ensure_funcs(gui_t *g, re_arena_t *a, re_gui_funcs_t *list) {
+    char msg[160];
+    if (!g->fana_ready)
+        return false;
+    if (funcs_ready(g))
+        return true;
+    if (!re_analysis_ensure(&g->an, RE_PASS_SYMBOLS))
+        return false;
+    list->n = 0;
+    re_gui_funcs_fill(list, a, &g->an);
+    snprintf(msg, sizeof(msg), "recovered %zu functions%s", RE_VEC_LEN(&g->an.scan.funcs),
+             g->an.scan.truncated ? " (capped)" : "");
+    re_console_push(&g->console, msg);
+    return true;
+}
+
 static void body_for(gui_t *g, re_arena_t *a, re_gui_listing_t *ls, re_gui_pseudo_t *ps, size_t sel,
                      uint16_t rows) {
-    const re_func_t *f = re_func_at(&g->an.scan, sel);
+    static const char *kMapOnly[] = {"mapped; press A to recover functions"};
+    const re_func_t *f;
     const re_pe_t *pe = g->an.has_pe ? &g->an.pe : NULL;
     const re_vset_t *vs = NULL;
     size_t pane = re_layout_body_rows(rows);
+    if (g->loaded && !funcs_ready(g)) {
+        show_lines(g, kMapOnly, NULL, 1u, 1u);
+        return;
+    }
+    f = re_func_at(&g->an.scan, sel);
     if (g->page_for != g->tab || g->page_sel != sel) {
         g->page_for = g->tab;
         g->page_sel = sel;
@@ -193,11 +220,8 @@ static bool load_file(gui_t *g, re_arena_t *a, re_gui_funcs_t *list, re_gui_pseu
     }
     re_arena_free(&g->fana);
     re_arena_init(&g->fana, 1u << 23);
-    // Map + parse only, then recover functions. Heavy passes (xrefs, regions,
-    // full string tables, score) stay demand-driven so a ~200MB PE is usable
-    // without retaining multi-GB analysis structures on idle load.
-    if (!re_analysis_open(&g->an, &g->fana, path) || !re_analysis_ensure(&g->an, RE_PASS_SYMBOLS)) {
-        re_analysis_close(&g->an);
+    // Map + PE parse only; press A to walk functions (keeps large-PE first paint lean).
+    if (!re_analysis_open(&g->an, &g->fana, path)) {
         g->loaded = false;
         re_mcp_live_clear_file();
         return false;
@@ -215,66 +239,54 @@ static bool load_file(gui_t *g, re_arena_t *a, re_gui_funcs_t *list, re_gui_pseu
     list->n = 0;
     re_gui_funcs_fill(list, a, &g->an);
     re_mcp_live_note_load(&g->console, path, &g->an, g->sel);
+    re_console_push(&g->console, "mapped; press A to recover functions");
     return true;
 }
 
-static void apply(gui_t *g, const re_ev_t *ev) {
-    if (ev->kind == RE_EV_KEY) {
-        switch (ev->key) {
-            case 'q':
-            case 'Q':
-            case RE_KEY_ESCAPE:
-                g->quit = true;
-                return;
-            case RE_KEY_ENTER:
-                if (re_ui_click(&g->ui, g->focus.zone))
-                    return;
-                if (!g->loaded)
-                    g->want_load = true;
-                return;
-            case 'l':
-            case 'L':
-                if (!g->loaded)
-                    g->want_load = true;
-                return;
-            case RE_KEY_UP:
-                if (g->sel)
-                    g->sel--;
-                return;
-            case RE_KEY_DOWN:
-                g->sel++;
-                return;
-            case RE_KEY_PGUP:
-                g->sel = g->sel > 16u ? g->sel - 16u : 0u;
-                return;
-            case RE_KEY_PGDN:
-                g->sel += 16u;
-                return;
-            case RE_KEY_HOME:
-                g->sel = 0;
-                return;
-            case RE_KEY_TAB:
-                re_focus_next(&g->focus);
-                return;
-            case RE_KEY_STAB:
-                re_focus_prev(&g->focus);
-                return;
-            case RE_KEY_LEFT:
-                if (g->tab) {
-                    g->tab--;
-                    g->repaint = true;
-                }
-                return;
-            case RE_KEY_RIGHT:
-                if (g->tab + 1u < RE_PAGE_COUNT) {
-                    g->tab++;
-                    g->repaint = true;
-                }
-                return;
-            default:
-                return;
-        }
+static void apply_nav(gui_t *g, int key) {
+    if (key == RE_KEY_UP && g->sel)
+        g->sel--;
+    else if (key == RE_KEY_DOWN)
+        g->sel++;
+    else if (key == RE_KEY_PGUP)
+        g->sel = g->sel > 16u ? g->sel - 16u : 0u;
+    else if (key == RE_KEY_PGDN)
+        g->sel += 16u;
+    else if (key == RE_KEY_HOME)
+        g->sel = 0;
+    else if (key == RE_KEY_TAB)
+        re_focus_next(&g->focus);
+    else if (key == RE_KEY_STAB)
+        re_focus_prev(&g->focus);
+    else if (key == RE_KEY_LEFT && g->tab) {
+        g->tab--;
+        g->repaint = true;
+    } else if (key == RE_KEY_RIGHT && g->tab + 1u < RE_PAGE_COUNT) {
+        g->tab++;
+        g->repaint = true;
     }
+}
+
+static void apply(gui_t *g, const re_ev_t *ev) {
+    int key;
+    if (ev->kind != RE_EV_KEY)
+        return;
+    key = ev->key;
+    if (key == 'q' || key == 'Q' || key == RE_KEY_ESCAPE) {
+        g->quit = true;
+        return;
+    }
+    if (key == RE_KEY_ENTER) {
+        if (!re_ui_click(&g->ui, g->focus.zone) && !g->loaded)
+            g->want_load = true;
+        return;
+    }
+    if ((key == 'l' || key == 'L') && !g->loaded)
+        g->want_load = true;
+    else if ((key == 'a' || key == 'A') && g->loaded)
+        g->want_analyze = true;
+    else
+        apply_nav(g, key);
 }
 
 static void on_load(void *user) {
@@ -348,6 +360,11 @@ static void feed_pointer(gui_t *g, re_screen_t *frame, const re_ev_t *ev) {
 
 static bool turn(gui_t *g, re_arena_t *a, re_screen_t *frame, re_gui_funcs_t *list,
                  re_gui_listing_t *ls, re_gui_pseudo_t *ps) {
+    if (g->want_analyze) {
+        g->want_analyze = false;
+        (void)ensure_funcs(g, a, list);
+        g->repaint = true;
+    }
     if (list->n && g->sel >= list->n)
         g->sel = list->n - 1u;
     if (g->loaded)

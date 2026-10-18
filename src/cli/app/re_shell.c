@@ -156,14 +156,13 @@ static void session_drop(session_t *s) {
     }
 }
 
-// Opening builds the analysis immediately rather than remembering only the path, so
-// the cost is paid once at open where the user is already waiting for it, and every
-// later command reads the result.
+// Opening maps and parses only. Heavy passes run when a command asks
+// (analyze / re_analysis_ensure); idle open of a large PE must stay near file size.
 static bool session_open(session_t *s, re_ctx_t *ctx, const char *path, const char **current,
                          re_report_t *r) {
     session_drop(s);
     re_arena_init(&s->arena, 1u << 22);
-    if (!re_analysis_open(&s->an, &s->arena, path) || !re_analysis_run_all(&s->an)) {
+    if (!re_analysis_open(&s->an, &s->arena, path)) {
         re_analysis_close(&s->an);
         re_arena_free(&s->arena);
         re_report_note(r, RE_ST_BAD, path);
@@ -173,8 +172,7 @@ static bool session_open(session_t *s, re_ctx_t *ctx, const char *path, const ch
     *current = re_arena_strdup(r->scratch.arena, path);
     ctx->session = &s->an;
     char msg[200];
-    snprintf(msg, sizeof(msg), "%s  %zu functions, %zu xrefs, %zu regions", path,
-             RE_VEC_LEN(&s->an.scan.funcs), RE_VEC_LEN(&s->an.xs.fwd), RE_VEC_LEN(&s->an.regions));
+    snprintf(msg, sizeof(msg), "%s  mapped (analyze to recover functions)", path);
     re_report_note(r, RE_ST_GOOD, msg);
     return true;
 }
