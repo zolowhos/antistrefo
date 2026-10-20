@@ -85,18 +85,19 @@ sources explicitly in CMakeLists.txt.
   `gs_cookie_read`, `guard_dispatch_icall`). **Zero real library functions.**
   `slack` is always 0 and unused.
 
-**Test corpus** — 1 clean baseline + 4 hostile inputs. Quote every path; two
-contain `[` and `]` which break PowerShell globs.
+**Test corpus** — 1 clean baseline + scale and robustness inputs. Prefer
+binaries already used in project practice: System32 samples, Chocolate Doom,
+SDL2, and synthetic PE fixtures under `tests/`. Quote paths with spaces.
 
 | File | What it exercises |
 |---|---|
-| `C:\Users\xyz\Downloads\vulnerable-drivers-main_[unknowncheats.me]_\vulnerable-drivers-main\cpqsysio64.sys` | Clean unobfuscated x64 kernel driver. The **control**: everything must work here, or the bug is ours. |
-| `C:\Program Files (x86)\Steam\steamapps\common\VRChat - Copy\GameAssembly.dll` | 214 MB IL2CPP binary. 264 exports with **randomised names** (`ACQuTyPeorx`, `AKkysVEPyjh`). Tests name handling and scale. |
-| `C:\Program Files (x86)\Steam\steamapps\common\VRChat - Copy\start_protected_game.exe` | Private packer/obfuscation. |
-| `C:\Program Files (x86)\Steam\steamapps\common\SCP Secret Laboratory\GameAssembly.dll` | Second, different packer. Compare against VRChat. |
-| `C:\Users\xyz\Downloads\xysc7n\loader.exe` | Third protection scheme. |
+| `C:\Windows\System32\ntdll.dll` | Clean x64 PE **control**. Everything must work here, or the bug is ours. |
+| `C:\Windows\System32\kernelbase.dll` | Larger system DLL for moderate scale and export/name handling. |
+| `C:\path\to\chocolate-doom.exe` | Mid-size open-source freeware PE; hand-checkable functions. |
+| `C:\path\to\SDL2.dll` | Large PE for scale/perf (many exports and functions). |
+| Project synthetic PE fixtures under `tests/` | Malformed or packed-style PE for robustness — degrade honestly, never crash. |
 
-**Non-negotiable across all four prompts:** on a protected or malformed input the
+**Non-negotiable across all four prompts:** on a packed or malformed input the
 tool must **never crash, hang, loop, or emit fabricated results**. It must report
 what is genuinely knowable (PE structure, sections, entropy, imports) and
 explicitly mark what is not recoverable. A wrong answer is worse than "unknown".
@@ -148,8 +149,8 @@ YOUR TASK
 3. Expose FLIRT results: name and module per function, in the `funcs` output and
    in the framed text renderer. Functions with no signature must be visibly
    unnamed, never given a fabricated library name.
-4. Add graceful degradation for protected inputs. On a packed or obfuscated
-   binary the tool must not crash, hang or emit fabricated matches; report what
+4. Add graceful degradation for packed or malformed inputs. On such a binary
+   the tool must not crash, hang or emit fabricated matches; report what
    is knowable and mark the rest unknown.
 5. Wire the 15-file rule into scripts/check.py. It is currently written in
    .rules/rules.md section 2 but NOT enforced, so nothing stops a future folder
@@ -164,21 +165,21 @@ CONSTRAINTS
   Then `ctest --preset clang-release` -> 6/6.
 - If the format test fails after your edits, run scripts\format.ps1 and rebuild.
 
-TEST FILES (quote paths - two contain [ and ] which break globs)
-  C:\Users\xyz\Downloads\vulnerable-drivers-main_[unknowncheats.me]_\vulnerable-drivers-main\cpqsysio64.sys
+TEST FILES (quote paths with spaces)
+  C:\Windows\System32\ntdll.dll
     clean control, must analyse correctly
-  C:\Program Files (x86)\Steam\steamapps\common\VRChat - Copy\GameAssembly.dll
-    214 MB IL2CPP, 264 exports with randomised names, scale test
-  C:\Program Files (x86)\Steam\steamapps\common\VRChat - Copy\start_protected_game.exe
-    private packer
-  C:\Program Files (x86)\Steam\steamapps\common\SCP Secret Laboratory\GameAssembly.dll
-    different packer
-  C:\Users\xyz\Downloads\xysc7n\loader.exe
-    third protection scheme
+  C:\Windows\System32\kernelbase.dll
+    larger system DLL, moderate scale
+  C:\path\to\chocolate-doom.exe
+    mid-size freeware PE, hand-checkable
+  C:\path\to\SDL2.dll
+    large PE for scale/perf
+  Project synthetic PE fixtures under tests/
+    malformed or packed-style PE for robustness
 
 Every one must exit 0 or fail cleanly with a real diagnostic. None may crash,
-hang, or loop. Run all five and report timing for each - the 214 MB binary is
-the perf case.
+hang, or loop. Run all five and report timing for each - SDL2.dll is the
+primary scale/perf case.
 
 DO NOT ask questions. Do not push. Commit when the gate and tests pass, then
 report: what you added, what genuinely matched and what did not, per-file
@@ -229,9 +230,9 @@ YOUR TASK
    reference it, at which instruction. This is the "String 'Hello' -> function
    sub_14001230" edge such a tool builds, and it is what makes a string finding
    actionable rather than just a list of offsets.
-4. Graceful degradation on protected inputs: never crash, hang or loop; report
-   what is knowable and mark the rest unknown. A wrong classification is worse
-   than "unknown".
+4. Graceful degradation on packed or malformed inputs: never crash, hang or
+   loop; report what is knowable and mark the rest unknown. A wrong
+   classification is worse than "unknown".
 5. Regression test per fix, including the no-crash guarantee.
 
 CONSTRAINTS
@@ -244,19 +245,19 @@ CONSTRAINTS
 - If the format test fails, run scripts\format.ps1 and rebuild.
 - Keep every folder at 15 files or fewer.
 
-TEST FILES (quote paths; two contain [ and ] which break globs)
-  C:\Users\xyz\Downloads\vulnerable-drivers-main_[unknowncheats.me]_\vulnerable-drivers-main\cpqsysio64.sys
+TEST FILES (quote paths with spaces)
+  C:\Windows\System32\ntdll.dll
     clean control - the CFG and block classification must be CORRECT here.
     Verify by hand on at least three real functions: check block boundaries
     against the actual branches and that edges match the disassembly.
-  C:\Program Files (x86)\Steam\steamapps\common\VRChat - Copy\GameAssembly.dll
-    214 MB IL2CPP, 264 randomised export names, scale/perf
-  C:\Program Files (x86)\Steam\steamapps\common\VRChat - Copy\start_protected_game.exe
-    private packer
-  C:\Program Files (x86)\Steam\steamapps\common\SCP Secret Laboratory\GameAssembly.dll
-    different packer
-  C:\Users\xyz\Downloads\xysc7n\loader.exe
-    third protection
+  C:\Windows\System32\kernelbase.dll
+    larger system DLL, moderate scale
+  C:\path\to\chocolate-doom.exe
+    mid-size freeware PE, hand-checkable
+  C:\path\to\SDL2.dll
+    large PE for scale/perf
+  Project synthetic PE fixtures under tests/
+    malformed or packed-style PE for robustness
 
 All five must exit 0 or fail cleanly with a real diagnostic; none may crash,
 hang or loop. Report per-file timings and function counts.
@@ -311,7 +312,8 @@ YOUR TASK
 5. Graceful degradation: a pass that cannot run must be reported as skipped
    with its reason, and must not abort the whole analysis or leave the context
    half-built.
-6. Regression test per fix, including the no-crash guarantee on protected input.
+6. Regression test per fix, including the no-crash guarantee on packed or
+   malformed input.
 
 CONSTRAINTS
 - Read .rules/rules.md first. Banner line 4 must start "Depends:". 100-column
@@ -324,17 +326,17 @@ CONSTRAINTS
 - Output policy unchanged: text when stdout is a TTY, JSON when piped,
   --format overrides, --no-color honoured. MCP must keep working.
 
-TEST FILES (quote paths; two contain [ and ] which break globs)
-  C:\Users\xyz\Downloads\vulnerable-drivers-main_[unknowncheats.me]_\vulnerable-drivers-main\cpqsysio64.sys
+TEST FILES (quote paths with spaces)
+  C:\Windows\System32\ntdll.dll
     clean control
-  C:\Program Files (x86)\Steam\steamapps\common\VRChat - Copy\GameAssembly.dll
-    214 MB IL2CPP, 264 randomised export names, scale/perf
-  C:\Program Files (x86)\Steam\steamapps\common\VRChat - Copy\start_protected_game.exe
-    private packer
-  C:\Program Files (x86)\Steam\steamapps\common\SCP Secret Laboratory\GameAssembly.dll
-    different packer
-  C:\Users\xyz\Downloads\xysc7n\loader.exe
-    third protection
+  C:\Windows\System32\kernelbase.dll
+    larger system DLL, moderate scale
+  C:\path\to\chocolate-doom.exe
+    mid-size freeware PE
+  C:\path\to\SDL2.dll
+    large PE for scale/perf
+  Project synthetic PE fixtures under tests/
+    malformed or packed-style PE for robustness
 
 All five must exit 0 or fail cleanly with a real diagnostic; none may crash,
 hang or loop. Report per-pass and total timings for each, and confirm the
@@ -409,22 +411,22 @@ CONSTRAINTS
   `ctest --preset clang-release` -> all pass.
 - Keep every folder at 15 files or fewer.
 
-TEST FILES (quote paths; two contain [ and ] which break globs)
-  C:\Users\xyz\Downloads\vulnerable-drivers-main_[unknowncheats.me]_\vulnerable-drivers-main\cpqsysio64.sys
+TEST FILES (quote paths with spaces)
+  C:\Windows\System32\ntdll.dll
     clean control. Hand-verify recovered argument counts and frame sizes
     against the disassembly for at least five real functions, and show the
     evidence.
-  C:\Program Files (x86)\Steam\steamapps\common\VRChat - Copy\GameAssembly.dll
-    214 MB IL2CPP, 264 randomised export names
-  C:\Program Files (x86)\Steam\steamapps\common\VRChat - Copy\start_protected_game.exe
-    private packer
-  C:\Program Files (x86)\Steam\steamapps\common\SCP Secret Laboratory\GameAssembly.dll
-    different packer
-  C:\Users\xyz\Downloads\xysc7n\loader.exe
-    third protection
+  C:\Windows\System32\kernelbase.dll
+    larger system DLL, moderate scale
+  C:\path\to\chocolate-doom.exe
+    mid-size freeware PE
+  C:\path\to\SDL2.dll
+    large PE for scale/perf
+  Project synthetic PE fixtures under tests/
+    malformed or packed-style PE for robustness
 
-All five must exit 0 or fail cleanly; none may crash, hang or loop. Protected
-binaries must degrade to "unknown", never to a confident wrong type.
+All five must exit 0 or fail cleanly; none may crash, hang or loop. Packed or
+malformed binaries must degrade to "unknown", never to a confident wrong type.
 
 DO NOT ask questions. Do not push. Commit each of items 1-2 and then as much of
 3-4 as is genuinely working. Then report, per item: done, partial, or not
@@ -444,11 +446,7 @@ started - with the hand-verification evidence for the control binary.
 
 ## Not covered
 
-The VRChat IL2CPP export-to-managed-method mapping is **not** in these prompts
-and remains open. Findings so far: it's an IL2CPP build with no
-`Assembly-CSharp.dll`; `UnityPlayer.dll` exports only `UnityMain`/`UnityMain2`
-(so there is no `il2cpp_*` table to map); `GameAssembly.dll`'s 264 exports have
-randomised names; and `global-metadata.dat` is encrypted (magic `0xE9998F90`
-where IL2CPP writes `0xFAB11BAF`). The real method-to-RVA mapping lives in that
-metadata and would need the protection reversed — a separate decision, not
-assumed here.
+Runtime-managed metadata reverse-mapping (for example recovering high-level
+names from an opaque on-disk metadata blob) is **not** in these prompts and
+remains a separate decision. These prompts stay on PE layout, FLIRT, CFG, the
+auto-analysis driver, and stack/type surfacing against the generic corpus above.
