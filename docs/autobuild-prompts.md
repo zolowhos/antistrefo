@@ -87,7 +87,7 @@ sources explicitly in CMakeLists.txt.
 
 **Test corpus** — 1 clean baseline + scale and robustness inputs. Prefer
 binaries already used in project practice: System32 samples, Chocolate Doom,
-SDL2, and synthetic PE fixtures under `tests/`. Quote paths with spaces.
+SDL2, and synthetic PE fixtures under `tests/fixtures/`. Quote paths with spaces.
 
 | File | What it exercises |
 |---|---|
@@ -95,7 +95,8 @@ SDL2, and synthetic PE fixtures under `tests/`. Quote paths with spaces.
 | `C:\Windows\System32\kernelbase.dll` | Larger system DLL for moderate scale and export/name handling. |
 | `C:\path\to\chocolate-doom.exe` | Mid-size open-source freeware PE; hand-checkable functions. |
 | `C:\path\to\SDL2.dll` | Large PE for scale/perf (many exports and functions). |
-| Project synthetic PE fixtures under `tests/` | Malformed or packed-style PE for robustness — degrade honestly, never crash. |
+| `tests/fixtures/packed_pe.bin` | Packed PE (custom stub + high-entropy payload) for robustness. |
+| `tests/fixtures/obfuscated_pe.bin` | Obfuscated/malformed PE for robustness — degrade honestly, never crash. |
 
 **Non-negotiable across all four prompts:** on a packed or malformed input the
 tool must **never crash, hang, loop, or emit fabricated results**. It must report
@@ -174,11 +175,13 @@ TEST FILES (quote paths with spaces)
     mid-size freeware PE, hand-checkable
   C:\path\to\SDL2.dll
     large PE for scale/perf
-  Project synthetic PE fixtures under tests/
-    malformed or packed-style PE for robustness
+  tests/fixtures/packed_pe.bin
+    packed PE for robustness
+  tests/fixtures/obfuscated_pe.bin
+    obfuscated/malformed PE for robustness
 
 Every one must exit 0 or fail cleanly with a real diagnostic. None may crash,
-hang, or loop. Run all five and report timing for each - SDL2.dll is the
+hang, or loop. Run all six and report timing for each - SDL2.dll is the
 primary scale/perf case.
 
 DO NOT ask questions. Do not push. Commit when the gate and tests pass, then
@@ -256,10 +259,12 @@ TEST FILES (quote paths with spaces)
     mid-size freeware PE, hand-checkable
   C:\path\to\SDL2.dll
     large PE for scale/perf
-  Project synthetic PE fixtures under tests/
-    malformed or packed-style PE for robustness
+  tests/fixtures/packed_pe.bin
+    packed PE for robustness
+  tests/fixtures/obfuscated_pe.bin
+    obfuscated/malformed PE for robustness
 
-All five must exit 0 or fail cleanly with a real diagnostic; none may crash,
+All six must exit 0 or fail cleanly with a real diagnostic; none may crash,
 hang or loop. Report per-file timings and function counts.
 
 DO NOT ask questions. Do not push. Commit when gate and tests pass, then report
@@ -335,10 +340,12 @@ TEST FILES (quote paths with spaces)
     mid-size freeware PE
   C:\path\to\SDL2.dll
     large PE for scale/perf
-  Project synthetic PE fixtures under tests/
-    malformed or packed-style PE for robustness
+  tests/fixtures/packed_pe.bin
+    packed PE for robustness
+  tests/fixtures/obfuscated_pe.bin
+    obfuscated/malformed PE for robustness
 
-All five must exit 0 or fail cleanly with a real diagnostic; none may crash,
+All six must exit 0 or fail cleanly with a real diagnostic; none may crash,
 hang or loop. Report per-pass and total timings for each, and confirm the
 session cache actually saves work on a second command.
 
@@ -422,10 +429,12 @@ TEST FILES (quote paths with spaces)
     mid-size freeware PE
   C:\path\to\SDL2.dll
     large PE for scale/perf
-  Project synthetic PE fixtures under tests/
-    malformed or packed-style PE for robustness
+  tests/fixtures/packed_pe.bin
+    packed PE for robustness
+  tests/fixtures/obfuscated_pe.bin
+    obfuscated/malformed PE for robustness
 
-All five must exit 0 or fail cleanly; none may crash, hang or loop. Packed or
+All six must exit 0 or fail cleanly; none may crash, hang or loop. Packed or
 malformed binaries must degrade to "unknown", never to a confident wrong type.
 
 DO NOT ask questions. Do not push. Commit each of items 1-2 and then as much of

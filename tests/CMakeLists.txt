@@ -386,3 +386,11 @@ if(MSVC)
     target_compile_definitions(re_test_large_mem PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
 add_test(NAME large_mem COMMAND re_test_large_mem)
+
+# Checked-in packed / obfuscated PE fixtures: info and triage must not crash.
+# Exit 0 with schema, or a clean documented nonzero with schema, both pass.
+add_test(NAME robustness_fixtures
+    COMMAND ${CMAKE_COMMAND}
+        -DANTISTREFO=$<TARGET_FILE:antistrefo>
+        -DFIXTURES=${CMAKE_CURRENT_SOURCE_DIR}/fixtures
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/run_robustness_fixtures.cmake)
