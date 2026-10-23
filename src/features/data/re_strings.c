@@ -1,8 +1,10 @@
 // re_strings.c - string, device name and PDB extraction from a mapped image.
 // Module: feature (C11).
 // Owns: printable run scanning in two encodings, device name finding, RSDS.
-// Depends: re_strings.h only. Every read is bounded, every run has a hard cap.
+// Depends: re_strings.h, string.h. Every read is bounded, every run has a hard cap.
 #include "features/data/re_strings.h"
+
+#include <string.h>
 
 void re_strings_init(re_strings_t *s) {
     re_vec_init(&s->hits, sizeof(re_str_hit_t));
@@ -142,6 +144,14 @@ static void find_prefixed(re_span_t img, const char *prefix, size_t plen, bool w
                           re_strings_t *out) {
     size_t stride = wide ? 2u : 1u;
     for (size_t i = 0; i + (plen + 1) * stride < img.n; i++) {
+        // No prefix can start where its first byte is not: jump to the next one.
+        if (img.p[i] != (uint8_t)prefix[0]) {
+            const uint8_t *nx = (const uint8_t *)memchr(img.p + i, prefix[0], img.n - i);
+            if (!nx)
+                break;
+            i = (size_t)(nx - img.p) - 1;
+            continue;
+        }
         bool hit = true;
         for (size_t k = 0; k < plen; k++) {
             size_t at = wide ? i + k * 2 : i + k;

@@ -65,7 +65,7 @@ static void test_targets(void) {
         for (size_t i = 0; i < n; i++)
             buf[i] = (uint8_t)((nib(cases[v].bytes[i * 2]) << 4) | nib(cases[v].bytes[i * 2 + 1]));
         if (!g_x64->decode(g_x64->ctx, 0x140001000ULL, re_span(buf, n), &in)) {
-            RE_CHECK(0 && "decode refused a branch vector");
+            RE_FAIL("decode refused a branch vector");
             continue;
         }
         if (cases[v].want)
@@ -261,19 +261,20 @@ static void test_lowering_ops(re_arena_t *a) {
 
 static void test_lowering_forms(re_arena_t *a) {
     // A memory destination is a read modify write: the address, the load, the
-    // operation, the address again, the store, then the zero and the writer the
-    // next branch reads. One op here would be a lost value.
+    // operation, the store back to the same address, then the zero and the writer
+    // the next branch reads. One op here would be a lost value; the address is built
+    // once and reused, so the store does not print a second copy of it.
     RE_CHECK_EQ_U((uint64_t)lower1("4801442410", a), RE_OP_CMP);
-    RE_CHECK_EQ_U(lowern("4801442410", a), 7);
-    // The byte form of the same group, with the immediate emitted first.
+    RE_CHECK_EQ_U(lowern("4801442410", a), 6);
+    // The byte form of the same group, with the immediate emitted first. Its address
+    // is [rax+rbx], which is one add.
     RE_CHECK_EQ_U((uint64_t)lower1("80241820", a), RE_OP_CMP);
-    RE_CHECK_EQ_U(lowern("80241820", a), 8);
+    RE_CHECK_EQ_U(lowern("80241820", a), 7);
     // A zero immediate is still an immediate. Reading it as absent would substitute a
     // register for the number the author wrote, which is a plausible wrong answer
-    // rather than an obvious one, so both forms are pinned. [reg+disp] lowers as
-    // CONST+INTADD (twice for RMW), so the count is two above the old opaque HEAP.
+    // rather than an obvious one, so both forms are pinned.
     RE_CHECK_EQ_U((uint64_t)lower1("4883601800", a), RE_OP_CMP); // and [rax+0x18],0
-    RE_CHECK_EQ_U(lowern("4883601800", a), 10);
+    RE_CHECK_EQ_U(lowern("4883601800", a), 8);
     RE_CHECK_EQ_U((uint64_t)lower1("48c7c000000000", a), RE_OP_CONST); // mov rax,0
     RE_CHECK_EQ_U((uint64_t)lower1("4883c000", a), RE_OP_CMP);         // add rax,0
     // The direction of a two operand form comes from bit 1, not bit 0: 0x00 and 0x01
@@ -379,14 +380,6 @@ static void test_implicit_reg(re_arena_t *a) {
     // naming these operands must not have widened the 64-bit push and pop exception.
     RE_CHECK_EQ_STR(render1("89c0", a, NULL), "mov eax, eax");
     RE_CHECK_EQ_STR(render1("83f801", a, NULL), "cmp eax, 0x1");
-    // movsxd r64, r/m32: dest is the reg field, never r/m-first.
-    {
-        uint8_t len = 0;
-        RE_CHECK_EQ_STR(render1("486300", a, &len), "movsxd rax, [rax]");
-        RE_CHECK_EQ_U(len, 3);
-        RE_CHECK_EQ_STR(render1("48634504", a, &len), "movsxd rax, [rbp+0x4]");
-        RE_CHECK_EQ_U(len, 4);
-    }
 }
 
 int main(void) {

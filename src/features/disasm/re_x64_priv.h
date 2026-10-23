@@ -75,13 +75,32 @@ typedef struct {
     uint64_t target;  // resolved branch or call destination
     uint64_t mem;     // effective address of a RIP relative operand
     bool has_target;
+    // Everything below is what the renderer and the form tables need beyond the length.
+    uint8_t seg;      // segment override: 0 none, 1 es, 2 cs, 3 ss, 4 ds, 5 fs, 6 gs
+    uint8_t rep;      // the last repeat prefix: 0 none, 2 is F3, 3 is F2
+    bool lock;        // F0 was present
+    bool p66;         // 0x66 was present, whether it narrowed or selected
+    bool evex;        // EVEX rather than VEX, when vex is set
+    uint8_t ev_aaa;   // EVEX write mask register, 0 is no mask
+    bool ev_z;        // EVEX zeroing
+    bool ev_b;        // EVEX broadcast, rounding or suppress all exceptions
+    uint8_t ev_ll;    // EVEX L'L: 0 is 128, 1 is 256, 2 is 512
+    uint8_t vr;       // ModRM.reg as a vector register, 0..31
+    uint8_t vm;       // ModRM.rm as a vector register, 0..31, register forms only
+    uint8_t vv;       // VEX.vvvv with EVEX.V', 0..31
+    uint8_t sib_idx;  // the raw SIB index with REX.X, and EVEX.V' as bit 4 for VSIB
+    uint8_t imm_size; // bytes of the first immediate
+    uint8_t imm2;     // the second immediate: enter's nesting level, extrq's index
+    uint8_t disp_size;
+    uint8_t raw_op0; // the first opcode byte after the prefixes: 0F, C4, C5, 62 or the op
 } x64_insn_t;
 
 // The opcode id packs the map so one 16 bit value identifies any encoding.
-// How many temporaries one function may mint. The emitter names them through a
-// fixed table of this size, so the bound is shared: a lowering that went past it
-// would mint a name the emitter cannot hold.
-#define RE_UNIQ_MAX 512
+// How many temporaries and constants one function may mint. The id lives in a
+// varnode's 16 bit offset, so this is the bound that field allows, less headroom
+// for the flag writer's zero. The decompiler sizes its tables from the IR, so a
+// large function is no longer cut off after its first few hundred instructions.
+#define RE_UNIQ_MAX 65000
 
 #define X64_MAP_SHIFT 8
 #define X64_ID(map, op) ((uint16_t)(((map) << X64_MAP_SHIFT) | (op)))
@@ -98,33 +117,6 @@ unsigned x64_reg_size(const x64_insn_t *in);
 const char *x64_reg_name(unsigned reg, uint8_t opsize);
 const char *x64_reg_name_ex(unsigned reg, uint8_t opsize, uint8_t rex);
 
-// Mnemonic selection for the encodings the opcode alone does not determine: the four
-// names one SIMD opcode takes under the four prefixes, the VEX maps, and the x87
-// escapes. All of them live in re_x64_simd.c and return NULL rather than a number
-// with a shape around it when the encoding has no name.
-const char *x64_simd_mnem(uint8_t map, unsigned op, uint8_t pfx);
-
-// True when the opcode belongs to one of those tables, that is, when the prefix
-// is what decides its name. x64_simd_mnem returning NULL for such an opcode means
-// the encoding has no form under this prefix, and the opcode map's one name must
-// not be used as a fallback: that name is the form of a different prefix.
-bool x64_simd_known(uint8_t map, unsigned op);
-
-// The group opcodes of the 0F map and the 3DNow selector. These take their mnemonic
-// from the reg field of the ModRM byte, so none of them can be named by the opcode
-// table, and a few of them change name with the prefix as well. Returns NULL when
-// the field selects nothing that has a name, which is not the same as a name that
-// a fallback should replace.
-const char *x64_grp0f_mnem(unsigned op, unsigned modrm, int64_t imm, bool mem, uint8_t pfx);
-
-// The x87 register forms need the stack register rendered, so the shape of the
-// operand list comes back with the name: X87_NONE, X87_ST, X87_ST0_ST or X87_ST_ST0.
-#define X87_NONE 0u
-#define X87_ST 1u
-#define X87_ST0_ST 2u
-#define X87_ST_ST0 3u
-const char *x64_x87_mnem(uint8_t esc, uint8_t modrm, bool mem, uint8_t *shape, uint8_t *st);
-
 // The vector register numbering the projection uses, so a renderer can tell a
 // vector operand from an integer one without consulting the encoding again. The
 // stride is 32 because a ymm register is what a VEX length bit makes of an xmm one,
@@ -133,6 +125,8 @@ const char *x64_x87_mnem(uint8_t esc, uint8_t modrm, bool mem, uint8_t *shape, u
 #define RE_X64_XMM_BASE 128u
 #define RE_X64_YMM_BASE 160u
 #define RE_X64_MMX_BASE 192u
+#define RE_X64_ZMM_BASE 200u
+#define RE_X64_K_BASE 232u
 
 // True when the three byte F3 0F 1E FA/FB endbr sequence starts at p. Modern
 // x86-64 code opens nearly every function with one, so it must be recognized.
@@ -142,35 +136,13 @@ bool x64_is_endbr(const uint8_t *p, size_t n);
 extern const struct re_disasm re_disasm_x64;
 extern const struct re_disasm re_disasm_x86;
 
-// The name of an instruction, in re_x64_name.c, and the questions the renderer asks
-// about the shape of its operand list before it prints one. All of them read the
-// projected record rather than the bytes, so the renderer cannot disagree with the
-// walk about either the name or the operands.
-const char *x64_text_mnemonic(const re_insn_t *in);
-const char *x64_text_vex_special(const re_insn_t *in);
-const char *x64_text_jcc(unsigned op);
-const char *x64_text_cmov(unsigned op);
-bool x64_text_has_imm(const re_insn_t *in);
-bool x64_group0f_single(unsigned op);
-bool x64_group0f_silent(const re_insn_t *in);
-bool x64_simd_store(unsigned op, uint8_t pfx);
-bool x64_is_group_op(const re_insn_t *in);
-bool x64_implicit_reg(const re_insn_t *in, unsigned *reg, uint8_t *force_size);
-
-// The x87 half of the text, in re_x64_x87.c beside the escape tables it reads: the
-// width of a memory operand the operation decides, and the stack register forms that
-// the whole ModRM byte decides.
-const char *x64_x87_mem_kw(const re_insn_t *in);
-void x64_x87_regs(re_strbuf_t *out, const re_insn_t *in);
-
-// Text rendering, in re_x64_text.c, and the IR lowering, split across three files
-// so each stays inside the line caps: re_x64_lower.c keeps the primitives, the
-// mov and test forms, the integer arithmetic block and the flow ops;
-// re_x64_lower2.c holds the second integer tranche (shifts, rotates, multiply and
-// divide, the stack forms, the extensions, the bit tests); re_x64_lower_simd.c
-// holds the vector and scalar float forms. All of them read the projected record
-// rather than the bytes, so re_insn_t has to be self sufficient for presentation
-// and the IR never needs the image again.
+// Text rendering, in fmt/re_x64_fmt.c, which decodes the record's raw bytes again and
+// renders from the instruction forms; and the IR lowering, split across three files so
+// each stays inside the line caps: re_x64_lower.c keeps the primitives, the mov and test
+// forms, the integer arithmetic block and the flow ops; re_x64_lower2.c holds the second
+// integer tranche (shifts, rotates, multiply and divide, the stack forms, the extensions,
+// the bit tests); re_x64_lower_simd.c holds the vector and scalar float forms. The
+// lowering reads the projected record rather than the bytes.
 void x64_render(const re_insn_t *in, re_arena_t *a, re_strbuf_t *out);
 size_t x64_lower(const re_insn_t *in, re_ir_func_t *f, re_arena_t *a);
 

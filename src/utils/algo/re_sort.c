@@ -4,13 +4,24 @@
 // Depends: re_sort.h only. No I/O, no globals, no allocation, not stable.
 #include "utils/algo/re_sort.h"
 
+#include <stdint.h>
 #include <string.h>
 
 #define RE_SORT_INSERT_MAX 16
 #define RE_SORT_DEPTH_MAX 24
 
+// Eight bytes at a time through a word, then the tail a byte at a time: a decoded
+// instruction is over a hundred bytes, and a byte loop made every swap the sort's cost.
 static void swap_el(unsigned char *a, unsigned char *b, size_t esz) {
-    for (size_t i = 0; i < esz; i++) {
+    size_t i = 0;
+    for (; i + 8 <= esz; i += 8) {
+        uint64_t t, u;
+        memcpy(&t, a + i, 8);
+        memcpy(&u, b + i, 8);
+        memcpy(a + i, &u, 8);
+        memcpy(b + i, &t, 8);
+    }
+    for (; i < esz; i++) {
         unsigned char t = a[i];
         a[i] = b[i];
         b[i] = t;

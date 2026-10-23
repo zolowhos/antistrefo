@@ -31,7 +31,8 @@ void re_gui_pseudo_fill(re_gui_pseudo_t *ps, re_arena_t *a, re_analysis_t *an, s
     re_decomp_t d;
     re_stack_t st;
     memset(&d, 0, sizeof(d));
-    d.jtables = NULL;
+    d.jtables = &an->jtables;
+    d.scan = &an->scan;
     d.code = &an->code;
     d.xrefs = &an->xs;
     d.arena = a;

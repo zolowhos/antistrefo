@@ -96,7 +96,7 @@ bool x64_lower3_map0(const re_insn_t *in, re_ir_func_t *f, re_arena_t *a) {
         return false;
     if ((op >= 0x10 && op <= 0x15) || (op >= 0x18 && op <= 0x1D))
         return lower_carry(f, a, in, (op & 8u) != 0);
-    if (op >= 0x80 && op <= 0x83)
+    if (op >= 0x80 && op <= 0x83 && ((in->reg & 7u) == 2u || (in->reg & 7u) == 3u))
         return lower_carry(f, a, in, (in->reg & 7u) == 3u);
     if ((op == 0xF6 || op == 0xF7) && (in->reg & 7u) == 0u)
         return lower_test_imm(f, a, in);
@@ -136,7 +136,7 @@ static bool bt_flag(re_ir_func_t *f, re_arena_t *a, uint16_t sz, re_varnode_t va
 static bool lower_btfam(re_ir_func_t *f, re_arena_t *a, const re_insn_t *in, unsigned sel,
                         re_varnode_t idx) {
     uint16_t sz = x64_lower_osize(in);
-    re_varnode_t val, bit, res;
+    re_varnode_t val, bit, res, one;
     re_ir_op_t o;
     if (!x64_ld_read_rm(f, a, in, sz, &val))
         return false;
@@ -144,11 +144,13 @@ static bool lower_btfam(re_ir_func_t *f, re_arena_t *a, const re_insn_t *in, uns
         return false;
     if (sel == 0)
         return true; // bt only sets the flag
-    if (!x64_lower_imm(f, a, 1, &bit))
+    if (!x64_lower_imm(f, a, 1, &one))
         return false;
+    // 1 << idx. The constant needs its own varnode: reusing one for both the input and
+    // the result shifted an undefined temporary, which printed as "? << n".
     o = x64_lower_mk(RE_OP_INTSHL);
     o.out = bit = x64_lower_uniq(f, sz);
-    o.in[0] = bit;
+    o.in[0] = one;
     o.in[1] = idx;
     if (!x64_lower_push(f, a, o))
         return false;
@@ -251,8 +253,6 @@ bool x64_lower2_map1(const re_insn_t *in, re_ir_func_t *f, re_arena_t *a) {
         return x64_ld_nop(f, a);
     if (op == 0x05 || op == 0x34 || op == 0x35)
         return x64_ld_int(f, a, 0);
-    if (op == 0x63)
-        return x64_ld_extend(f, a, in, true, 4);
     if (op >= 0x40 && op <= 0x4F)
         return lower_conditional(f, a, in, false);
     if (op >= 0x90 && op <= 0x9F)

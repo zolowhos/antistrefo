@@ -4,6 +4,9 @@
 // Depends: re_x64_priv.h and re_x64_decode. Text and IR live in their own files.
 #include "features/disasm/re_x64_priv.h"
 
+#include <string.h>
+
+#include "features/disasm/fmt/re_x64_form.h"
 #include "features/disasm/re_x64_tab.h"
 #include "features/disasm/re_x64_tab0f.h"
 
@@ -20,17 +23,27 @@ static const char *const kRegD[16] = {"eax", "ecx", "edx",  "ebx",  "esp",  "ebp
                                       "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d"};
 static const char *const kRegQ[16] = {"rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi",
                                       "r8",  "r9",  "r10", "r11", "r12", "r13", "r14", "r15"};
-static const char *const kRegX[16] = {"xmm0",  "xmm1",  "xmm2",  "xmm3", "xmm4",  "xmm5",
-                                      "xmm6",  "xmm7",  "xmm8",  "xmm9", "xmm10", "xmm11",
-                                      "xmm12", "xmm13", "xmm14", "xmm15"};
-static const char *const kRegY[16] = {"ymm0",  "ymm1",  "ymm2",  "ymm3", "ymm4",  "ymm5",
-                                      "ymm6",  "ymm7",  "ymm8",  "ymm9", "ymm10", "ymm11",
-                                      "ymm12", "ymm13", "ymm14", "ymm15"};
+// The vector files hold thirty two registers each under EVEX, and the mask file eight.
+static const char *const kRegX[32] = {"xmm0",  "xmm1",  "xmm2",  "xmm3",  "xmm4",  "xmm5",  "xmm6",
+                                      "xmm7",  "xmm8",  "xmm9",  "xmm10", "xmm11", "xmm12", "xmm13",
+                                      "xmm14", "xmm15", "xmm16", "xmm17", "xmm18", "xmm19", "xmm20",
+                                      "xmm21", "xmm22", "xmm23", "xmm24", "xmm25", "xmm26", "xmm27",
+                                      "xmm28", "xmm29", "xmm30", "xmm31"};
+static const char *const kRegY[32] = {"ymm0",  "ymm1",  "ymm2",  "ymm3",  "ymm4",  "ymm5",  "ymm6",
+                                      "ymm7",  "ymm8",  "ymm9",  "ymm10", "ymm11", "ymm12", "ymm13",
+                                      "ymm14", "ymm15", "ymm16", "ymm17", "ymm18", "ymm19", "ymm20",
+                                      "ymm21", "ymm22", "ymm23", "ymm24", "ymm25", "ymm26", "ymm27",
+                                      "ymm28", "ymm29", "ymm30", "ymm31"};
+static const char *const kRegZ[32] = {"zmm0",  "zmm1",  "zmm2",  "zmm3",  "zmm4",  "zmm5",  "zmm6",
+                                      "zmm7",  "zmm8",  "zmm9",  "zmm10", "zmm11", "zmm12", "zmm13",
+                                      "zmm14", "zmm15", "zmm16", "zmm17", "zmm18", "zmm19", "zmm20",
+                                      "zmm21", "zmm22", "zmm23", "zmm24", "zmm25", "zmm26", "zmm27",
+                                      "zmm28", "zmm29", "zmm30", "zmm31"};
+static const char *const kRegK[8] = {"k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7"};
 static const char *const kRegM[8] = {"mm0", "mm1", "mm2", "mm3", "mm4", "mm5", "mm6", "mm7"};
 
-// The maps 2 and 3 have no names in the opcode map: every instruction in them takes
-// its name from the prefix and the opcode together, which is the table in
-// re_x64_simd.c. Returning NULL here is what keeps a placeholder out of the text.
+// The base name of a one byte or 0F opcode, or NULL for the maps whose names the
+// prefix decides; the full name of any form is in fmt/re_x64_form.h.
 const char *x64_mnem(uint16_t id) {
     uint8_t map = X64_ID_MAP(id);
     uint8_t op = X64_ID_OP(id);
@@ -40,12 +53,16 @@ const char *x64_mnem(uint16_t id) {
 }
 
 const char *x64_reg_name(unsigned reg, uint8_t opsize) {
+    if (reg >= RE_X64_K_BASE)
+        return reg < RE_X64_K_BASE + 8u ? kRegK[reg - RE_X64_K_BASE] : NULL;
+    if (reg >= RE_X64_ZMM_BASE)
+        return kRegZ[reg - RE_X64_ZMM_BASE];
     if (reg >= RE_X64_MMX_BASE)
         return reg < RE_X64_MMX_BASE + 8u ? kRegM[reg - RE_X64_MMX_BASE] : NULL;
     if (reg >= RE_X64_YMM_BASE)
-        return reg < RE_X64_MMX_BASE ? kRegY[reg - RE_X64_YMM_BASE] : NULL;
+        return kRegY[reg - RE_X64_YMM_BASE];
     if (reg >= RE_X64_XMM_BASE)
-        return reg < RE_X64_YMM_BASE ? kRegX[reg - RE_X64_XMM_BASE] : NULL;
+        return kRegX[reg - RE_X64_XMM_BASE];
     if (reg >= 64)
         return NULL;
     if (opsize == 1)
@@ -232,15 +249,16 @@ static bool x64_vt_decode(void *ctx, uint64_t addr, re_span_t code, re_insn_t *o
     // register.
     if (is_simd(&in)) {
         bool mm = is_mmx(&in);
-        unsigned vb = mm ? RE_X64_MMX_BASE : (in.vex_l ? RE_X64_YMM_BASE : RE_X64_XMM_BASE);
-        out->reg = (uint8_t)(vb + (mm ? (in.reg & 7u) : in.reg));
+        unsigned vl = x64_vlen(&in);
+        unsigned vb =
+            mm ? RE_X64_MMX_BASE
+               : (vl == 64u ? RE_X64_ZMM_BASE : (vl == 32u ? RE_X64_YMM_BASE : RE_X64_XMM_BASE));
+        out->reg = (uint8_t)(vb + (mm ? (in.reg & 7u) : in.vr));
         if (!in.is_mem)
-            out->rm = (uint8_t)(vb + (mm ? (in.rm & 7u) : in.rm));
-        // For a SIMD instruction the operand size is the width of the register, which
-        // is what the text renderer needs to say how wide a memory operand is. It is
-        // not read as a general purpose size anywhere: these instructions do not move
-        // a general purpose register.
-        out->opsize = mm ? 8u : (in.vex_l ? 32u : 16u);
+            out->rm = (uint8_t)(vb + (mm ? (in.rm & 7u) : in.vm));
+        // For a SIMD instruction the operand size is the width of the register. It is not
+        // read as a general purpose size anywhere: these instructions do not move one.
+        out->opsize = mm ? 8u : (uint8_t)vl;
     } else {
         out->reg = in.reg;
         out->rm = in.rm;
@@ -253,6 +271,8 @@ static bool x64_vt_decode(void *ctx, uint64_t addr, re_span_t code, re_insn_t *o
     out->ops[1] = in.map;
     out->ops[2] = (uint8_t)(((unsigned)in.modrm >> 3) & 7u);
     out->ops[3] = (uint8_t)(in.modrm & 7u);
+    memset(out->raw, 0, sizeof(out->raw));
+    memcpy(out->raw, code.p, in.size);
     out->text = re_str("");
     classify(&in, out);
     return true;
@@ -286,6 +306,10 @@ static const char *x64_vt_reg_name(void *ctx, unsigned reg) {
 
 static unsigned x64_vt_reg_size(void *ctx, unsigned reg) {
     (void)ctx;
+    if (reg >= RE_X64_K_BASE)
+        return 8;
+    if (reg >= RE_X64_ZMM_BASE)
+        return 64;
     if (reg >= RE_X64_MMX_BASE)
         return 8;
     if (reg >= RE_X64_YMM_BASE)

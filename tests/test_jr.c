@@ -16,9 +16,9 @@
 #include "features/meta/re_disasm.h"
 #include "features/pe/re_pe.h"
 #include "utils/json/re_jr.h"
-#include "re_pe_fixture.h"
 #include "utils/mem/re_arena.h"
 #include "utils/text/re_strbuf.h"
+#include "re_pe_fixture.h"
 
 // This suite is its own binary, so it owns its counters.
 int re_test_count = 0;
@@ -212,13 +212,16 @@ static void test_switch(void) {
     re_strbuf_init(&out, &a);
     re_decompile_func(&d, &f, NULL, &out);
     src = out.p ? out.p : "";
-    RE_CHECK(strstr(src, "switch ("));
+    // The fixture's 0x100B is a direct jmp: its target is in the instruction, so a
+    // table recorded against it is not a dispatch and must not turn it into a switch.
+    // A real table on an indirect jump is covered by the golden decompile test.
+    RE_CHECK(!strstr(src, "switch ("));
     RE_CHECK(!strstr(src, "goto 0x"));
     while ((src = strstr(src, "case ")) != NULL) {
         cases++;
         src += 5;
     }
-    RE_CHECK_EQ_U(cases, 2);
+    RE_CHECK_EQ_U(cases, 0);
     re_arena_free(&a);
 }
 

@@ -1,20 +1,28 @@
 // re_x64_lower.c - lowers a projected x86-64 instruction into the register IR.
 // Module: feature (C11).
 // Owns: the shared primitives, the mov and test forms, integer arithmetic, flow.
-// Depends: re_x64_priv.h. Stateless per instruction; folding lives in the emitter.
+// Depends: re_x64_priv.h. The lowering is deliberately stateless with respect to
+//           control flow: it reads one instruction and emits ops for it. Constant
+//           folding and register tracking belong to the emitter, which already has
+//           to model control flow, and a backend that remembered cross instruction
+//           state would have to be reset per function. The one counter it does keep
+//           lives in the IR, which is itself per function.
 #include "features/disasm/re_x64_priv.h"
 
 #include "features/dec/re_ir.h"
 
-// Operand size in bytes. 0x80/0x82 are always byte; 0x81/0x83 honour the prefix.
+// The operation size in bytes, shared with the other lowering files. Most forms
+// follow the operand size prefix, but a few
+// have their own width and get it wrong if the prefix is consulted instead. Only 0x82
+// is byte sized among the immediate group: 0x80, 0x81 and 0x83 all honour the prefix,
+// and treating them as byte operations would misread every stack adjustment.
 uint16_t x64_lower_osize(const re_insn_t *in) {
     unsigned op = RE_INSN_OPCODE(in);
     unsigned map = RE_INSN_MAP(in);
     if (map == 1 && (op == 0xB6 || op == 0xB7 || op == 0xBE || op == 0xBF))
         return 1;
-    if (map == 0 && (op == 0x80 || op == 0x82 || op == 0x88 || op == 0x8A || op == 0xC6 ||
-                     (op >= 0xB0 && op <= 0xB7) || (op >= 0x70 && op <= 0x7F) || op == 0xFE ||
-                     op == 0xF6 || (op <= 0x3E && (op & 1u) == 0)))
+    if (map == 0 && (op == 0x88 || op == 0x8A || op == 0xC6 || (op >= 0xB0 && op <= 0xB7) ||
+                     (op >= 0x70 && op <= 0x7F) || op == 0x82))
         return 1;
     return (uint16_t)in->opsize;
 }
@@ -44,15 +52,6 @@ bool x64_lower_uniq_ok(const re_ir_func_t *f) {
     return f->next_uniq < RE_UNIQ_MAX;
 }
 
-// The memory operand as an address. A frame relative access becomes a STACK varnode
-// so the emitter can name it as a local; anything else is a HEAP address, which is
-// the honest description when the base is a register whose value we do not know.
-static re_varnode_t mem_vn(const re_insn_t *in) {
-    if (in->base == 4 || in->base == 5) // rsp or rbp
-        return re_ir_vn(RE_SPACE_STACK, 8, (uint16_t)(int16_t)in->disp);
-    return re_ir_vn(RE_SPACE_HEAP, 8, 0);
-}
-
 re_ir_op_t x64_lower_mk(re_op_kind_t kind) {
     re_ir_op_t op = re_ir_mkop((re_ir_op_t){0});
     op.op = kind;
@@ -71,53 +70,7 @@ re_varnode_t x64_lower_rm(const re_insn_t *in) {
     return re_ir_vn(RE_SPACE_HEAP, x64_lower_osize(in), 0);
 }
 
-// Address of a memory operand: RIP const, STACK for rsp/rbp, else reg or reg+disp.
-bool x64_lower_addr(re_ir_func_t *f, re_arena_t *a, const re_insn_t *in, re_varnode_t *out) {
-    re_ir_op_t op;
-    re_varnode_t imm;
-    if (in->rip_rel) {
-        op = x64_lower_mk(RE_OP_CONST);
-        op.out = const_vn(f);
-        op.const_val = (int64_t)in->mem;
-        op.extra = RE_CONST_OPERAND;
-        if (!x64_lower_push(f, a, op))
-            return false;
-        *out = op.out;
-        return true;
-    }
-    if (in->base == 4 || in->base == 5) {
-        op = x64_lower_mk(RE_OP_VAR);
-        op.out = mem_vn(in);
-        if (!x64_lower_push(f, a, op))
-            return false;
-        *out = op.out;
-        return true;
-    }
-    if (in->base != RE_REG_NONE && in->index == RE_REG_NONE) {
-        re_varnode_t base = re_ir_vn(RE_SPACE_REG, 8, in->base);
-        if (in->disp == 0) {
-            *out = base;
-            return true;
-        }
-        if (!x64_lower_imm(f, a, in->disp, &imm))
-            return false;
-        op = x64_lower_mk(RE_OP_INTADD);
-        op.out = x64_lower_uniq(f, 8);
-        op.in[0] = base;
-        op.in[1] = imm;
-        op.const_val = in->disp;
-        if (!x64_lower_push(f, a, op))
-            return false;
-        *out = op.out;
-        return true;
-    }
-    op = x64_lower_mk(RE_OP_VAR);
-    op.out = re_ir_vn(RE_SPACE_HEAP, 8, 0);
-    if (!x64_lower_push(f, a, op))
-        return false;
-    *out = op.out;
-    return true;
-}
+// The address of a memory operand is built in re_x64_addr.c.
 
 // An immediate operand, emitted as its own CONST so the value is in the IR and not
 // only in a field the emitter would have to know to look in. This is what the
@@ -177,13 +130,21 @@ static bool lower_mov(re_ir_func_t *f, re_arena_t *a, const re_insn_t *in) {
     if (op == 0xC6 || op == 0xC7 || (op >= 0xB0 && op <= 0xBF))
         return lower_mov_imm(f, a, in);
     if (op == 0x88 || op == 0x89) { // mov r/m, reg
-        bool mem = in->is_mem;
-        if (mem && !x64_lower_addr(f, a, in, &addr))
+        // With a register destination this is a copy, not a store: compilers emit
+        // this encoding for most register moves, and reading it as a store through
+        // the destination printed nearly every function as a pointer write.
+        if (!in->is_mem) {
+            o = x64_lower_mk(RE_OP_VAR);
+            o.out = x64_lower_reg(in, in->rm);
+            o.in[0] = x64_lower_reg(in, in->reg);
+            return x64_lower_push(f, a, o);
+        }
+        if (!x64_lower_addr(f, a, in, &addr))
             return false;
         o = x64_lower_mk(RE_OP_STORE);
         o.in[0] = x64_lower_rm(in);
         o.in[1] = x64_lower_reg(in, in->reg);
-        o.in[2] = mem ? addr : o.in[0];
+        o.in[2] = addr;
         return x64_lower_push(f, a, o);
     }
     if (op == 0x8A || op == 0x8B) { // mov reg, r/m
@@ -246,6 +207,9 @@ static re_op_kind_t group_kind(unsigned reg) {
 static bool lower_rmw(re_ir_func_t *f, re_arena_t *a, const re_insn_t *in, re_op_kind_t kind,
                       re_varnode_t second, re_varnode_t dest, bool store_back,
                       re_varnode_t *out_result) {
+    // store_back is the r/m destination form, r/m = r/m op reg; without it the form is
+    // reg = reg op r/m, and the register is the left operand: sub ecx, [m] is ecx - [m].
+    bool reg_first = !store_back;
     re_ir_op_t o = x64_lower_mk(RE_OP_LOAD);
     re_ir_op_t result;
     re_varnode_t addr;
@@ -260,16 +224,16 @@ static bool lower_rmw(re_ir_func_t *f, re_arena_t *a, const re_insn_t *in, re_op
     // A register destination is written directly; a memory one needs a temporary,
     // because the value has to exist before it can be stored.
     result.out = (dest.space == RE_SPACE_REG) ? dest : x64_lower_uniq(f, x64_lower_osize(in));
-    result.in[0] = o.out;
-    result.in[1] = second;
+    result.in[0] = reg_first ? second : o.out;
+    result.in[1] = reg_first ? o.out : second;
     if (!x64_lower_push(f, a, result))
         return false;
     result_vn = result.out;
     *out_result = result_vn;
     if (!store_back)
         return true;
-    if (!x64_lower_addr(f, a, in, &addr))
-        return false;
+    // The store goes back to the address the load used. Building it a second time
+    // would print the same address computation twice.
     o = x64_lower_mk(RE_OP_STORE);
     o.in[0] = x64_lower_rm(in);
     o.in[1] = result_vn;
@@ -283,7 +247,23 @@ static bool lower_rmw(re_ir_func_t *f, re_arena_t *a, const re_insn_t *in, re_op
 // wrote and always vacuously true, so both real operands are recorded instead and
 // the emitter builds the condition the flags actually established.
 static bool lower_test(re_ir_func_t *f, re_arena_t *a, const re_insn_t *in) {
-    return x64_flags_pair(f, a, RE_SETF_TEST, x64_lower_rm(in), x64_lower_reg(in, in->reg));
+    re_varnode_t val;
+    // A memory operand is read first: the condition has to name the value tested,
+    // not an address with no definition behind it.
+    if (!x64_ld_read_rm(f, a, in, x64_lower_osize(in), &val))
+        return false;
+    return x64_flags_pair(f, a, RE_SETF_TEST, val, x64_lower_reg(in, in->reg));
+}
+
+// xor r, r and sub r, r: the compiler's way of writing zero. Lowered as the constant
+// it produces, so the body says 0 rather than "x ^ x" about a value nobody needed.
+static bool lower_zero_idiom(re_ir_func_t *f, re_arena_t *a, const re_insn_t *in, unsigned wr) {
+    re_ir_op_t o = x64_lower_mk(RE_OP_CONST);
+    o.out = x64_lower_reg(in, in->rm);
+    o.const_val = 0;
+    if (!x64_lower_push(f, a, o))
+        return false;
+    return x64_flags_result(f, a, wr, o.out);
 }
 
 // Whether this opcode form carries an immediate. It cannot be inferred from the
@@ -352,7 +332,7 @@ static bool lower_alu_reg(re_ir_func_t *f, re_arena_t *a, re_op_kind_t kind, re_
 // A memory operand has to be read first: a printed condition must name a value
 // the reader can see, not an address the value was sitting at.
 static bool lower_cmp(re_ir_func_t *f, re_arena_t *a, const re_insn_t *in, re_varnode_t second,
-                      bool acc) {
+                      bool acc, bool to_reg) {
     re_varnode_t left = acc ? x64_lower_reg(in, 0) : x64_lower_rm(in);
     if (in->is_mem) {
         re_varnode_t addr;
@@ -365,6 +345,10 @@ static bool lower_cmp(re_ir_func_t *f, re_arena_t *a, const re_insn_t *in, re_va
         if (!x64_lower_push(f, a, o))
             return false;
     }
+    // cmp reg, r/m (3A, 3B) compares the register against the r/m side: the order of
+    // the operands is the order of every ordered condition that reads the flags.
+    if (to_reg)
+        return x64_flags_pair(f, a, RE_SETF_CMP, second, left);
     return x64_flags_pair(f, a, RE_SETF_CMP, left, second);
 }
 
@@ -387,7 +371,10 @@ static bool lower_alu(re_ir_func_t *f, re_arena_t *a, const re_insn_t *in) {
     if (!imm_form)
         second = x64_lower_reg(in, in->reg);
     if (kind == RE_OP_CMP)
-        return lower_cmp(f, a, in, second, acc);
+        return lower_cmp(f, a, in, second, acc, to_reg);
+    if ((kind == RE_OP_INTXOR || kind == RE_OP_INTSUB) && !imm_form && !acc && !in->is_mem &&
+        in->reg == in->rm)
+        return lower_zero_idiom(f, a, in, arith_writer(kind));
     if (acc) {
         if (!lower_alu_reg(f, a, kind, second, x64_lower_reg(in, 0), &result))
             return false;
@@ -396,7 +383,11 @@ static bool lower_alu(re_ir_func_t *f, re_arena_t *a, const re_insn_t *in) {
                        to_reg ? x64_lower_reg(in, in->reg) : x64_lower_rm(in), !to_reg, &result))
             return false;
     } else {
+        // reg = reg op r/m reads the r/m register as the second operand; the other
+        // direction reads the reg field. Using reg for both made sub rcx, r8 rcx - rcx.
         dst = to_reg ? x64_lower_reg(in, in->reg) : x64_lower_rm(in);
+        if (to_reg)
+            second = x64_lower_rm(in);
         if (!lower_alu_reg(f, a, kind, second, dst, &result))
             return false;
     }
@@ -421,14 +412,22 @@ static bool lower_flow(const re_insn_t *in, re_ir_func_t *f, re_arena_t *a) {
         o.in[0] = o.out;
         return x64_lower_push(f, a, o);
     }
+    if (!in->is_call && !in->is_branch)
+        return false;
+    // An indirect transfer carries its target as an input: the register, or the value
+    // loaded from the memory operand, so a reader sees what was called or jumped to.
+    if (!in->has_target && !in->is_conditional) {
+        re_varnode_t tv;
+        if (!x64_ld_read_rm(f, a, in, 8, &tv))
+            return false;
+        o.in[0] = in->is_mem ? tv : re_ir_vn(RE_SPACE_REG, 8, in->rm);
+    }
     if (in->is_call) {
         o.op = in->has_target ? RE_OP_CALL : RE_OP_CALLIND;
-        o.out = x64_lower_reg(in, 0);
+        o.out = re_ir_vn(RE_SPACE_REG, 8, 0);
         o.const_val = t;
         return x64_lower_push(f, a, o);
     }
-    if (!in->is_branch)
-        return false;
     o.op = in->is_conditional ? RE_OP_CBRANCH : RE_OP_BRANCH;
     o.out = x64_lower_uniq(f, 1);
     o.const_val = t;
@@ -464,9 +463,12 @@ static bool lower_one(const re_insn_t *in, re_ir_func_t *f, re_arena_t *a) {
     if ((op >= 0x88 && op <= 0x8D) || op == 0xC6 || op == 0xC7 || (op >= 0xB0 && op <= 0xBF))
         return lower_mov(f, a, in);
     if (op >= 0x80 && op <= 0x83) {
-        // the group form: seven of the eight selectors are plain arithmetic and
-        // stay here; adc and sbb read the carry, so they belong to lower2
-        if ((in->reg & 7u) > 3u)
+        // the group form: six of the eight selectors are plain arithmetic and stay
+        // here; only adc (/2) and sbb (/3) read the carry, so only they go to lower2.
+        // Sending /0 and /1 there lowered every add and or with an immediate as a
+        // carry operation.
+        unsigned sel = in->reg & 7u;
+        if (sel != 2u && sel != 3u)
             return lower_alu(f, a, in);
         return x64_lower2(in, f, a);
     }
