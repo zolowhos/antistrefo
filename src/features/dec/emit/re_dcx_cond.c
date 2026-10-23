@@ -238,8 +238,15 @@ static bool cond_write(re_strbuf_t *b, const dx_cond_t *c) {
             return re_strbuf_puts(b, c->raw);
         if (!c->l || c->op > DX_GT)
             return re_strbuf_puts(b, "?");
-        return re_strbuf_puts(b, c->l) && re_strbuf_puts(b, " ") && re_strbuf_puts(b, kSym[c->op]) &&
-               re_strbuf_puts(b, " ") && re_strbuf_puts(b, c->r);
+        if (!re_strbuf_puts(b, c->l))
+            return false;
+        if (!re_strbuf_puts(b, " "))
+            return false;
+        if (!re_strbuf_puts(b, kSym[c->op]))
+            return false;
+        if (!re_strbuf_puts(b, " "))
+            return false;
+        return re_strbuf_puts(b, c->r);
     }
     pa = c->kind == DX_C_AND && c->a && is_or_text(c->a);
     pb = c->kind == DX_C_AND && c->b && is_or_text(c->b);

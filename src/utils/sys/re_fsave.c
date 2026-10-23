@@ -2,6 +2,9 @@
 // Module: util (C11).
 // Owns: the bodies behind re_fsave.h.
 // Depends: re_fsave.h, stdio, windows.h or stdio rename. 64-bit seeks on both.
+#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#    define _POSIX_C_SOURCE 200809L
+#endif
 #include "utils/sys/re_fsave.h"
 
 #include <stdio.h>
