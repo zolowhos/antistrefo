@@ -59,7 +59,7 @@ static shape_t count_shape(const re_code_t *c, uint64_t table, uint8_t width, en
     s.count = 0;
     s.enc = enc;
     s.width = width;
-    for (uint32_t i = 0; i < RE_JTABLE_MAX; i++) {
+    for (uint32_t i = 0; i < c->lim.jtable_max; i++) {
         uint64_t raw = 0;
         if (!read_entry(c, table, width, i, &raw))
             break;
@@ -241,7 +241,7 @@ const re_jtable_t *re_jtable_for(const re_vec_t *tables, uint64_t at) {
         const re_jtable_t *t = RE_VEC_PTR(tables, re_jtable_t, i);
         if (t->at != at)
             continue;
-        if (t->count < RE_JTABLE_MIN || t->count > RE_JTABLE_MAX)
+        if (t->count < RE_JTABLE_MIN || t->count > RE_JTABLE_HARD)
             return NULL;
         if (t->width != 4 && t->width != 8)
             return NULL;

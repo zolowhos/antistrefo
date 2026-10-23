@@ -7,8 +7,6 @@
 
 #include "utils/algo/re_sort.h"
 
-#define RE_XREF_STRINGS_MAX 20000u
-
 // A name bound to an address. One shape serves imports, exports and strings, so
 // there is exactly one lookup routine in this file.
 typedef struct {
@@ -78,10 +76,11 @@ static void build_exports(const re_pe_t *pe, re_arena_t *a, re_vec_t *out) {
 
 // Strings are found at file offsets, so each one is translated to a virtual
 // address. A string in a section with no raw data has no address and is dropped.
-static void build_strings(const re_pe_t *pe, re_span_t img, re_arena_t *a, re_vec_t *out) {
+static void build_strings(const re_code_t *c, re_arena_t *a, re_vec_t *out) {
+    const re_pe_t *pe = c->pe;
     re_strings_t st;
     re_strings_init(&st);
-    re_strings_scan(img, 4, RE_XREF_STRINGS_MAX, a, &st);
+    re_strings_scan(c->img, 4, re_lim_size(c->lim.xref_strings), a, &st);
     for (size_t i = 0; i < RE_VEC_LEN(&st.hits); i++) {
         const re_str_hit_t *h = RE_VEC_PTR(&st.hits, re_str_hit_t, i);
         uint32_t rva = 0;
@@ -262,7 +261,7 @@ void re_xref_build(re_code_t *c, const re_fscan_t *scan, const re_pe_t *pe, re_a
     re_vec_init(&x.strings, sizeof(named_t));
     build_imports(pe, a, &x.imports);
     build_exports(pe, a, &x.exports);
-    build_strings(pe, c->img, a, &x.strings);
+    build_strings(c, a, &x.strings);
     for (size_t i = 0; i < RE_VEC_LEN(&scan->edges); i++) {
         const re_edge_t *e = RE_VEC_PTR(&scan->edges, re_edge_t, i);
         re_xref_t r;

@@ -249,7 +249,7 @@ static void gather_evidence(re_code_t *c, const re_fscan_t *scan, const re_pe_t 
     sort_u64(RE_VEC_PTR(jt, uint64_t, 0), RE_VEC_LEN(jt));
     re_strings_t s;
     re_strings_init(&s);
-    re_strings_scan(c->img, 4, 20000, a, &s);
+    re_strings_scan(c->img, 4, re_lim_size(c->lim.str_hits), a, &s);
     for (size_t i = 0; i < RE_VEC_LEN(&s.hits); i++) {
         uint32_t rva = 0;
         if (!re_pe_off2rva(pe, RE_VEC_AT(&s.hits, re_str_hit_t, i).off, &rva))
@@ -285,7 +285,7 @@ size_t re_region_scan(re_code_t *c, const re_fscan_t *scan, const re_xrefset_t *
         uint64_t left = end - va;
         uint64_t n = left < (uint64_t)win ? left : (uint64_t)win;
         re_region_t r;
-        if (RE_VEC_LEN(out) >= RE_REGIONS_MAX) {
+        if ((uint64_t)RE_VEC_LEN(out) >= c->lim.regions) {
             *truncated = true;
             break;
         }

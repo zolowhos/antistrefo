@@ -45,7 +45,6 @@ static const char *const kIrpNames[] = {
 #define RE_IRP_LAST (RE_IRP_SLOTS - 1)
 
 #define RE_TLS_CALLBACK_MAX 64u
-#define RE_SEED_POINTER_MAX 4096u
 
 static void add_seed(re_arena_t *a, re_vec_t *out, uint64_t va, re_str_t name, const char *module) {
     re_seed_t s;
@@ -212,7 +211,7 @@ static void seed_driver(const re_pe_t *pe, re_arena_t *a, re_vec_t *out) {
 // seed list with noise.
 static void seed_pointers(const re_pe_t *pe, const re_code_t *code, re_arena_t *a, re_vec_t *out) {
     size_t n = 0;
-    for (uint16_t i = 0; i < pe->n_sec && n < RE_SEED_POINTER_MAX; i++) {
+    for (uint16_t i = 0; i < pe->n_sec && (uint64_t)n < code->lim.ptr_seeds; i++) {
         const re_pe_section_t *s = &pe->sec[i];
         uint64_t end;
         uint64_t bytes = s->rsize < s->vsize ? s->rsize : s->vsize;
@@ -226,7 +225,8 @@ static void seed_pointers(const re_pe_t *pe, const re_code_t *code, re_arena_t *
                 break;
             if (v < pe->image_base || v - pe->image_base >= pe->size_of_image)
                 continue;
-            if (!re_code_in_code(code, v) || !re_code_insn(code, v, &in))
+            if (!re_code_in_code(code, v) || re_code_hostile(code, v) ||
+                !re_code_insn(code, v, &in))
                 continue;
             add_seed(a, out, v, re_str(""), RE_SEED_MODULE_POINTER);
             n++;

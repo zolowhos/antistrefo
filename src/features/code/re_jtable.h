@@ -21,6 +21,8 @@ extern "C" {
 // be inventing a case count nobody can check.
 #define RE_JTABLE_MIN 2u
 #define RE_JTABLE_MAX 1024u
+// The most entries any tier counts, re_limits_t::jtable_max in the deep tier.
+#define RE_JTABLE_HARD 65536u
 
 typedef struct {
     uint64_t table_va; // first entry
