@@ -115,7 +115,7 @@ static bool ensure_funcs(gui_t *g, re_arena_t *a, re_gui_funcs_t *list) {
 
 static void body_for(gui_t *g, re_arena_t *a, re_gui_listing_t *ls, re_gui_pseudo_t *ps, size_t sel,
                      uint16_t rows) {
-    static const char *kMapOnly[] = {"mapped; press A to recover functions"};
+    static const char *kMapOnly[] = {"function recovery failed"};
     const re_func_t *f;
     const re_pe_t *pe = g->an.has_pe ? &g->an.pe : NULL;
     const re_vset_t *vs = NULL;
@@ -220,7 +220,6 @@ static bool load_file(gui_t *g, re_arena_t *a, re_gui_funcs_t *list, re_gui_pseu
     }
     re_arena_free(&g->fana);
     re_arena_init(&g->fana, 1u << 23);
-    // Map + PE parse only; press A to walk functions (keeps large-PE first paint lean).
     if (!re_analysis_open(&g->an, &g->fana, path)) {
         g->loaded = false;
         re_mcp_live_clear_file();
@@ -239,7 +238,7 @@ static bool load_file(gui_t *g, re_arena_t *a, re_gui_funcs_t *list, re_gui_pseu
     list->n = 0;
     re_gui_funcs_fill(list, a, &g->an);
     re_mcp_live_note_load(&g->console, path, &g->an, g->sel);
-    re_console_push(&g->console, "mapped; press A to recover functions");
+    g->want_analyze = true;
     return true;
 }
 
@@ -283,8 +282,6 @@ static void apply(gui_t *g, const re_ev_t *ev) {
     }
     if ((key == 'l' || key == 'L') && !g->loaded)
         g->want_load = true;
-    else if ((key == 'a' || key == 'A') && g->loaded)
-        g->want_analyze = true;
     else
         apply_nav(g, key);
 }
