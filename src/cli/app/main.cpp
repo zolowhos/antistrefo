@@ -18,18 +18,18 @@
 #include "cli/screen/re_gui.h"
 #include "mcp/re_mcp.h"
 #include "mcp/re_mcp_side.h"
+#include "re_version.h"
 
 namespace {
 
 constexpr const char *kName = "antistrefo";
-constexpr const char *kVersion = "0.1.0";
 constexpr const char *kSchema = "antistrefo/1";
 constexpr const char *kDesc =
     "AI driven static analyzer for reverse engineering applications, libraries, or whatever you "
     "want";
 
 void print_usage() {
-    std::fprintf(stderr, "%s %s - %s\n\nusage:\n", kName, kVersion, kDesc);
+    std::fprintf(stderr, "%s %s - %s\n\nusage:\n", kName, RE_VERSION, kDesc);
     size_t count = 0;
     const re_cmd_t *table = re_cmd_table(&count);
     for (size_t i = 0; i < count; i++) {
@@ -177,7 +177,7 @@ int main(int argc, char **argv) {
         return 0;
     }
     if (re_str_eq_cstr(re_str(cmd->name), "version")) {
-        std::fprintf(stderr, "%s %s schema %s\n", kName, kVersion, kSchema);
+        std::fprintf(stderr, "%s %s schema %s\n", kName, RE_VERSION, kSchema);
         return 0;
     }
     if (re_str_eq_cstr(re_str(cmd->name), "mcp"))

@@ -4,8 +4,15 @@
 # Depends: CMake 3.25 or newer, a C11 and C++17 compiler. Rules in .rules/rules.md.
 cmake_minimum_required(VERSION 3.25)
 
+# The product version is the RE_VERSION line in src/re_version.h. Do not write it here.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/re_version.h" RE_VERSION_H)
+string(REGEX MATCH "#define RE_VERSION \"([0-9]+\\.[0-9]+\\.[0-9]+)\"" _re_ver "${RE_VERSION_H}")
+if(NOT CMAKE_MATCH_1)
+    message(FATAL_ERROR "src/re_version.h must define RE_VERSION as a dotted triple")
+endif()
+
 project(antistrefo
-    VERSION 0.3.0
+    VERSION ${CMAKE_MATCH_1}
     DESCRIPTION "AI driven static analyzer for reverse engineering applications, libraries, or whatever you want"
     LANGUAGES C CXX)
 

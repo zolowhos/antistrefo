@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.3.0-blue" alt="version 0.3.0">
+  <img src="https://img.shields.io/github/v/release/zolowhos/antistrefo?label=version" alt="version">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT licensed">
   <img src="https://img.shields.io/badge/language-C11%20%2B%20C%2B%2B17-blue" alt="C11 and C++17">
   <img src="https://img.shields.io/badge/tests-41%20targets-brightgreen" alt="41 test targets">
@@ -188,6 +188,10 @@ $ python scripts\check.py .
 $ cmake --build --preset clang-release
 $ ctest  --preset clang-release
 ```
+
+The product version is the `RE_VERSION` line in `src/re_version.h`. Usage text, the
+screen mark, the MCP server version, and the CMake project version all read that line.
+The release tag is `v` plus that same number.
 
 The gate is mechanical and it is not advisory. 41 CTest targets, and a set of rules
 covering line and function caps, file banners, ASCII-only source, arena-only

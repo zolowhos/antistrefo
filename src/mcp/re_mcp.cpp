@@ -3,6 +3,7 @@
 // Owns: framing, the JSON-RPC dispatch, and ida-mcp tool list filtering.
 // Depends: re_mcp.h, re_jr, re_table, re_cmds, re_mcp_live, re_mcp_db.
 #include "mcp/re_mcp.h"
+#include "re_version.h"
 
 #include "utils/json/re_jr.h"
 #include "utils/text/re_util.h"
@@ -29,7 +30,6 @@ namespace {
 // style transports use. Getting this wrong silently corrupts the stream.
 constexpr const char *kProtocolVersion = "2025-06-18";
 constexpr const char *kName = "antistrefo";
-constexpr const char *kVersion = "0.1.0";
 constexpr const char *kInstructions =
     "antistrefo static analysis with an ida-mcp style tool surface (ELF, PE): "
     "open_database, then execute_query with op=funcs|disasm|decompile|xrefs|strings|.... "
@@ -120,7 +120,7 @@ void handle_initialize(Server *srv, re_arena_t *a, double id) {
     re_strbuf_puts(&b, ",\"serverInfo\":{\"name\":\"");
     re_strbuf_puts(&b, kName);
     re_strbuf_puts(&b, "\",\"version\":\"");
-    re_strbuf_puts(&b, kVersion);
+    re_strbuf_puts(&b, RE_VERSION);
     re_strbuf_puts(&b, "\"},\"instructions\":");
     re_jr_escape(&b, re_str(kInstructions));
     re_strbuf_puts(&b, "}");

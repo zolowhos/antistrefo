@@ -3,6 +3,7 @@
 // Owns: the assertions. Exercises re_screen.h and re_layout.h only.
 // Depends: re_test, re_arena, re_strbuf, re_screen, re_layout.
 #include "re_test.h"
+#include "re_version.h"
 
 #include "utils/mem/re_arena.h"
 #include "utils/text/re_strbuf.h"
@@ -205,7 +206,7 @@ static void arr_build(re_arena_t *a, arr_t *f) {
     re_strbuf_init(&f->out, a);
     re_strbuf_init(&f->dump, a);
     f->L.file = "lo_world.i64";
-    f->L.mark = "antistrefo 0.1.0";
+    f->L.mark = "antistrefo " RE_VERSION;
     f->L.toolbar = tabs;
     f->L.n_toolbar = 3;
     f->L.nav_pos = 40;
@@ -243,7 +244,7 @@ static void test_layout_bands(re_arena_t *a) {
     RE_CHECK(strstr(d, "lo_world.i64") != NULL);
     RE_CHECK(strstr(d, "<Functions>") != NULL);
     RE_CHECK(strstr(d, "<Pseudocode-A>") != NULL);
-    RE_CHECK(strstr(d, "<antistrefo 0.1.0>") != NULL);
+    RE_CHECK(strstr(d, "<antistrefo " RE_VERSION ">") != NULL);
     RE_CHECK(strstr(d, "_printf") != NULL);
     RE_CHECK(strstr(d, "return 0;") != NULL);
     bool accent = false;

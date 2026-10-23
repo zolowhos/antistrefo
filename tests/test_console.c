@@ -3,6 +3,7 @@
 // Owns: the assertions for re_console.h and the layout console geometry.
 // Depends: re_test, re_arena, re_strbuf, re_console, re_layout, re_screen.
 #include "re_test.h"
+#include "re_version.h"
 
 #include "utils/mem/re_arena.h"
 #include "utils/text/re_strbuf.h"
@@ -29,7 +30,7 @@ static void test_layout_console_band(re_arena_t *a) {
     re_strbuf_init(&out, a);
     re_strbuf_init(&dump, a);
     L.file = "lo_world.i64";
-    L.mark = "antistrefo 0.1.0";
+    L.mark = "antistrefo " RE_VERSION;
     L.toolbar = tabs;
     L.n_toolbar = 3;
     L.list_title = "Functions";

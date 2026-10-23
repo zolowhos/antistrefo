@@ -4,6 +4,7 @@
 // Depends: re_shell.h, re_table, re_report, re_tui, re_cmds. Dispatches through the
 //           same command table the argv path uses, so this is not a second tool.
 #include "cli/app/re_shell.h"
+#include "re_version.h"
 
 #include "features/analysis/re_analyze.h"
 #include "utils/mem/re_vec.h"
@@ -91,7 +92,7 @@ static void banner(re_report_t *r) {
     re_panel_t p;
     const char *tabs[4] = {"browse", "strings", "xrefs", "decompile"};
     re_report_open(r, r->scratch.arena, r->ctx, tabs, 4);
-    re_report_head(r, "antistrefo 0.1.0", "schema antistrefo/1");
+    re_report_head(r, "antistrefo " RE_VERSION, "schema antistrefo/1");
     re_panel_init(&p, r->scratch.arena, "Get started", 1);
     re_panel_kv(&r->tui, &p, "load", "open <file>", RE_ST_ACCENT);
     re_panel_text(&r->tui, &p, "then a bare command uses that file, e.g. funcs");
@@ -196,7 +197,7 @@ static int run(re_ctx_t *ctx, re_report_t *r, line_t *l, const char **current, s
         return 0;
     }
     if (re_str_eq_cstr(word, "version")) {
-        re_report_note(r, RE_ST_NONE, "antistrefo 0.1.0  schema antistrefo/1");
+        re_report_note(r, RE_ST_NONE, "antistrefo " RE_VERSION "  schema antistrefo/1");
         return 0;
     }
     // open is a shell word rather than a table command, so the remembered file is a

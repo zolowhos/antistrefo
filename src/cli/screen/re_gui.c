@@ -3,6 +3,7 @@
 // Owns: the loop, the selection, and the mapping from keys to state.
 // Depends: re_gui.h, term, input, focus, draw, layout, console, analysis, mcp live.
 #include "cli/screen/re_gui.h"
+#include "re_version.h"
 
 #include "features/analysis/re_analyze.h"
 #include "features/code/re_code.h"
@@ -116,7 +117,7 @@ static void compose(re_screen_t *s, gui_t *g, const re_gui_funcs_t *l) {
     re_layout_t L = {0};
     L.toolbar = kMenu;
     L.n_toolbar = 6;
-    L.mark = "antistrefo 0.1.0";
+    L.mark = "antistrefo " RE_VERSION;
     L.left_w = 28;
     L.console = clog;
     L.n_console = re_console_view(&g->console, clog);
