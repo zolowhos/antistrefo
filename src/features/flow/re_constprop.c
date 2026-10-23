@@ -12,32 +12,41 @@
 // same way the SSA pass keys definitions so the two passes describe one state.
 // A cell that is not known says nothing: the pass never invents a value.
 typedef struct {
-    int64_t val;   // the known value, when known is set
+    int64_t val;   // the known value, when gen is current
+    uint32_t gen;  // the block the value was written in; any other block reads unknown
     uint8_t space; // re_space_t provenance of the tracked location
-    uint8_t known; // the value under this cell is current
 } cell_t;
 
+// Forgetting everything at a block start is a new generation, not a cleared table:
+// clearing all the cells for every block was the pass's whole cost.
 typedef struct {
     cell_t cell[RE_FLOW_MAX_KEYS];
     re_flow_stat_t *st;
+    uint32_t gen; // the current block's generation, never 0
 } env_t;
+
+static bool known(const env_t *e, uint32_t k) {
+    return e->cell[k].gen == e->gen;
+}
 
 // A constant operand is recorded under a unique id rather than in a register,
 // and the emitter resolves it by that id, so the table indexes the id directly.
 // An id past the bound was never minted into the table, so it names nothing.
 static bool const_known(const env_t *e, const re_varnode_t *vn, int64_t *out) {
-    if (vn->offset >= RE_FLOW_MAX_KEYS || !e->cell[vn->offset].known)
+    // Constant ids share the table with the register band above RE_FLOW_REG_BASE,
+    // so an id at or past the band names nothing here rather than a register.
+    if (vn->offset >= RE_FLOW_REG_BASE || !known(e, vn->offset))
         return false;
     *out = e->cell[vn->offset].val;
     return true;
 }
 
 static void put(env_t *e, uint32_t k, int64_t v) {
-    if (k >= RE_FLOW_MAX_KEYS)
+    if (k >= RE_FLOW_REG_BASE)
         return;
     e->cell[k].val = v;
     e->cell[k].space = 0xFF; // the constant tables provenance marker
-    e->cell[k].known = 1;
+    e->cell[k].gen = e->gen;
 }
 
 static void put_reg(env_t *e, uint32_t k, uint16_t off, int64_t v) {
@@ -45,12 +54,12 @@ static void put_reg(env_t *e, uint32_t k, uint16_t off, int64_t v) {
         return;
     e->cell[k].val = v;
     e->cell[k].space = RE_SPACE_REG;
-    e->cell[k].known = 1;
+    e->cell[k].gen = e->gen;
 }
 
 static void kill(env_t *e, uint32_t k) {
     if (k < RE_FLOW_MAX_KEYS)
-        e->cell[k].known = 0;
+        e->cell[k].gen = 0;
 }
 
 static uint32_t reg_key(uint16_t off) {
@@ -70,7 +79,7 @@ static bool get(env_t *e, const re_varnode_t *vn, int64_t *out) {
     if (vn->space != RE_SPACE_REG || vn->size != 8)
         return false;
     k = reg_key(vn->offset);
-    if (k >= RE_FLOW_MAX_KEYS || !e->cell[k].known || e->cell[k].space != RE_SPACE_REG)
+    if (k >= RE_FLOW_MAX_KEYS || !known(e, k) || e->cell[k].space != RE_SPACE_REG)
         return false;
     *out = e->cell[k].val;
     return true;
@@ -289,6 +298,14 @@ void re_flow_constprop(re_ir_func_t *f, re_arena_t *a, re_flow_stat_t *st) {
     memset(&e, 0, sizeof(e));
     e.st = st;
     for (size_t bi = 0; bi < f->n_blocks; bi++) {
+        // A block can be entered from more than one place, so nothing known at the
+        // end of the block before it in address order holds at its start. Carrying
+        // the table across turned real branches at a join into "opaque predicates".
+        if (++e.gen == 0) {
+            memset(e.cell, 0, sizeof(e.cell)); // the stamp wrapped: clear once, really
+            e.gen = 1;
+        }
+        prev = NULL;
         for (size_t k = 0; k < f->blocks[bi].n_ops; k++) {
             re_ir_op_t *op = &f->blocks[bi].ops[k];
             try_fold(&e, op);

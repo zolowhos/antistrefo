@@ -208,7 +208,7 @@ static void emit_hits(re_ctx_t *ctx, re_span_t img, re_format_t fmt, const re_pe
         const re_search_hit_t *h = RE_VEC_PTR(&s->hits, re_search_hit_t, i);
         uint32_t rva = 0;
         uint64_t hit_va = 0, insn_va = 0;
-        re_str_t insn_text;
+        re_str_t insn_text = re_strn(NULL, 0);
         bool have_insn = false;
         if (pe && pe->valid && re_pe_off2rva(pe, h->off, &rva))
             hit_va = pe->image_base + rva;

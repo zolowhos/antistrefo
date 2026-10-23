@@ -23,6 +23,16 @@ extern int re_test_fail;
         }                                                          \
     } while (0)
 
+// An unconditional failure. RE_CHECK(0) reads the same but is a constant condition,
+// which MSVC /W4 reports (C4127) and /WX then refuses to build.
+#define RE_FAIL(msg)                                         \
+    do {                                                     \
+        re_test_count++;                                     \
+        re_test_fail++;                                      \
+        printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, msg); \
+        fflush(stdout);                                      \
+    } while (0)
+
 #define RE_CHECK_EQ_U(got, want)                                                            \
     do {                                                                                    \
         re_test_count++;                                                                    \

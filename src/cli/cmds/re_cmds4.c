@@ -22,6 +22,7 @@
 #include "cli/render/re_report.h"
 
 #include <stdio.h>
+#include <string.h>
 
 static bool pick_func(re_ctx_t *ctx, const re_fscan_t *scan, const re_pe_t *pe, const char *pos,
                       const re_func_t **out) {
@@ -225,11 +226,13 @@ int re_cmd_decompile(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_vec_init(&tables, sizeof(re_jtable_t));
     re_jtable_scan(&code, &scan, ctx->arena, &tables);
     re_vec_init(&sites, sizeof(re_dc_site_t));
+    memset(&d, 0, sizeof(d));
     d.code = &code;
     d.jtables = &tables;
     d.xrefs = &xs;
     d.arena = ctx->arena;
     d.sites = &sites;
+    d.scan = &scan;
     re_strbuf_init(&text, ctx->arena);
     ok = re_decompile_ok(&d, fn);
     if (ok)

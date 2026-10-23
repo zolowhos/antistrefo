@@ -176,7 +176,7 @@ static void check_conditions(const re_disasm_t *dis, re_arena_t *a) {
 }
 
 // The stack and the widening forms: a push is a subtract and a store, a pop a
-// load and an add, and the signed widenings carry the signed bit.
+// load and an add, the signed widenings carry the signed bit, and cdq is a shift.
 static void check_stack_and_casts(const re_disasm_t *dis, re_arena_t *a) {
     re_ir_func_t ir;
     static const uint8_t kPush[] = {0x55};                    // push rbp
@@ -209,8 +209,9 @@ static void check_stack_and_casts(const re_disasm_t *dis, re_arena_t *a) {
     re_ir_func_init(&ir);
     re_ir_block_begin(&ir, a, RE_LT_ADDR, 1);
     RE_CHECK(low1(a, dis, &ir, kCdq, 1) > 0);
-    o = find_op(&ir, RE_OP_CAST);
-    RE_CHECK(o != NULL && (o->extra & RE_CAST_SIGNED) && o->out.offset == 2);
+    o = find_op(&ir, RE_OP_INTSAR); // edx = eax >> 31: the sign, not a widening of ax
+    RE_CHECK(o != NULL && o->out.offset == 2 && o->out.size == 4 && o->in[0].offset == 0 &&
+             o->in[0].size == 4);
 }
 
 // The rest of the integer tranche and the honest refusals: neg with its writer,

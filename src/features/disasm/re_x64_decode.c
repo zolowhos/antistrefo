@@ -1,301 +1,274 @@
-// re_x64_decode.c - the x86-64 length decoder. It walks one instruction and stops.
+// re_x64_decode.c - the x86-64 decoder. It walks one instruction and stops.
 // Module: feature (C11).
-// Owns: prefix, opcode, ModRM, SIB, displacement and immediate length decoding.
-// Depends: re_x64_priv.h and the two opcode tables. Every read is bounds checked
-// against the span it was handed, so a truncated instruction fails instead of
-// reading past the end, and an unknown opcode fails instead of guessing a length.
+// Owns: prefix, VEX/EVEX, opcode, ModRM, SIB, displacement and immediate decoding.
+// Depends: re_x64_priv.h, the opcode class tables and the form tables.
 #include "features/disasm/re_x64_priv.h"
 
+#include <string.h>
+
+#include "features/disasm/fmt/re_x64_form.h"
 #include "features/disasm/re_x64_tab.h"
 #include "features/disasm/re_x64_tab0f.h"
 
-#define X64_MAX_PREFIX 15
+// The longest instruction the processor accepts. A sixteenth byte raises #GP, so a
+// decode that needs one is not an instruction.
+#define X64_MAX_LEN 15u
 
-// One byte, bounds checked. A false return means the instruction is truncated.
-static bool rd8(const uint8_t *p, size_t n, size_t *i, uint8_t *out) {
-    if (*i >= n)
-        return false;
-    *out = p[(*i)++];
-    return true;
-}
+// What a byte is in prefix position: 1 a legacy prefix, 2 a REX byte, 0 neither.
+static const uint8_t kPfx[256] = {
+    [0x26] = 1, [0x2E] = 1, [0x36] = 1, [0x3E] = 1, [0x64] = 1, [0x65] = 1, [0x66] = 1,
+    [0x67] = 1, [0xF0] = 1, [0xF2] = 1, [0xF3] = 1, [0x40] = 2, [0x41] = 2, [0x42] = 2,
+    [0x43] = 2, [0x44] = 2, [0x45] = 2, [0x46] = 2, [0x47] = 2, [0x48] = 2, [0x49] = 2,
+    [0x4A] = 2, [0x4B] = 2, [0x4C] = 2, [0x4D] = 2, [0x4E] = 2, [0x4F] = 2,
+};
 
-// k little endian bytes, bounds checked. Little endian is the only order x86
-// stores memory in, so there is no big endian path to keep honest.
-static bool rdn(const uint8_t *p, size_t n, size_t *i, unsigned k, uint64_t *out) {
-    uint64_t v = 0;
-    unsigned b;
-    for (b = 0; b < k; b++) {
-        uint8_t c;
-        if (!rd8(p, n, i, &c))
-            return false;
-        v |= (uint64_t)c << (8u * b);
+// The segment a prefix byte overrides, in the numbering of x64_insn_t.seg.
+static uint8_t seg_of(uint8_t c) {
+    switch (c) {
+        case 0x26:
+            return 1;
+        case 0x2E:
+            return 2;
+        case 0x36:
+            return 3;
+        case 0x3E:
+            return 4;
+        case 0x64:
+            return 5;
+        default:
+            return 6; // 0x65
     }
-    *out = v;
-    return true;
 }
 
-static bool is_legacy_prefix(uint8_t c) {
-    return c == 0xF0 || c == 0xF2 || c == 0xF3 || c == 0x2E || c == 0x36 || c == 0x3E ||
-           c == 0x26 || c == 0x64 || c == 0x65 || c == 0x66 || c == 0x67;
+// The 0F map opcodes whose meaning no prefix changes and which are valid with any
+// operand. A legacy encoding of one of these needs no form lookup to be accepted, which
+// keeps the walk fast through the conditional jumps, moves and bit operations that
+// make up nearly all of the two byte map in real code. Bit n of word n/32.
+static const uint32_t kMap1Plain[8] = {
+    0x80000820u, // 00..1F: 05 syscall, 0B ud2, 1F nop
+    0x00020000u, // 20..3F: 31 rdtsc
+    0x0000FFFFu, // 40..5F: 40..4F cmov
+    0x00000000u, // 60..7F
+    0xFFFFFFFFu, // 80..9F: jcc, setcc
+    0x0000B83Cu, // A0..BF: A2 cpuid, A3 bt, A4 A5 shld, AB bts, AC AD shrd, AF imul
+    0x0000FF00u, // C0..DF: C8..CF bswap
+    0x00000000u, // E0..FF
+};
+
+static bool map1_plain(uint8_t op) {
+    return (kMap1Plain[op >> 5] >> (op & 31u)) & 1u;
 }
 
-// Legacy prefixes and REX. A REX byte is void when a legacy prefix follows it, so
-// the register is cleared rather than kept, and that is why the order matters.
-static bool x64_legacy(const uint8_t *p, size_t n, size_t *i, x64_insn_t *in, bool *osize,
-                       bool *asize) {
-    size_t taken = 0;
-    uint8_t c;
+// Legacy prefixes and REX. A REX byte is void when a legacy prefix follows it, so the
+// register is cleared rather than kept, and that is why the order matters.
+static bool x64_prefixes(const uint8_t *b, size_t *i, x64_insn_t *in, bool *asize, bool *rex_seen) {
     for (;;) {
-        if (!rd8(p, n, i, &c))
+        uint8_t c = b[*i];
+        uint8_t k = kPfx[c];
+        if (k == 0)
+            return true;
+        if (++*i >= X64_MAX_LEN)
             return false;
-        if (is_legacy_prefix(c)) {
-            in->rex = 0;
-            if (c == 0x66) {
-                *osize = true;
-                in->pfx = 1;
-            }
-            if (c == 0x67)
-                *asize = true;
-            // F3 and F2 are the SIMD prefixes as well as rep and repne. Which one
-            // it is decides the instruction in the whole 0F 10 to 0F FF block, so
-            // the last one seen is kept rather than only the boolean they used to
-            // collapse into.
-            if (c == 0xF3)
-                in->pfx = 2;
-            if (c == 0xF2)
-                in->pfx = 3;
-            if (++taken > X64_MAX_PREFIX)
-                return false;
-            continue;
-        }
-        if (c >= 0x40 && c <= 0x4F) {
+        if (k == 2) {
             in->rex = c;
+            *rex_seen = true;
             continue;
         }
-        (*i)--;
-        return true;
+        in->rex = 0;
+        if (c == 0x66)
+            in->p66 = true;
+        else if (c == 0x67)
+            *asize = true;
+        else if (c == 0xF0)
+            in->lock = true;
+        else if (c == 0xF2 || c == 0xF3)
+            in->rep = (c == 0xF3) ? 2u : 3u;
+        else if (seg_of(c) >= 5u || in->seg < 5u)
+            in->seg = seg_of(c); // es, cs, ss and ds are null in long mode
     }
 }
 
-// VEX2, VEX3 and EVEX, which stand in for the escape byte and are followed by an
-// opcode. The map field sits in a different place in each encoding: VEX3 and EVEX
-// carry an explicit mmmmm, but VEX2 has only pp, where zero means the 0F map. The
-// trailing payload byte is a register specifier and is skipped.
-static bool x64_vex(const uint8_t *p, size_t n, size_t *i, uint8_t esc, x64_insn_t *in) {
-    unsigned payload = (esc == 0xC5) ? 1u : (esc == 0xC4) ? 2u : 3u;
-    uint8_t first = 0;
-    uint8_t second = 0;
-    unsigned k;
-    for (k = 0; k < payload; k++) {
-        uint8_t b;
-        if (!rd8(p, n, i, &b))
-            return false;
-        if (k == 0)
-            first = b;
-        else if (k == 1)
-            second = b;
-    }
-    // The third operand is stored ones' complement in every one of the three
-    // encodings, so it is complemented back here. Rendering the stored value
-    // names the wrong register for every AVX instruction with three operands.
-    in->vex_vvvv = (uint8_t)((~((payload == 1u ? first : second) >> 3)) & 0x0Fu);
-    // The length bit: zero is 128 bit and one is 256. It is what decides whether the
-    // registers a VEX instruction names are xmm or ymm, and it sits in the same place
-    // in all three encodings.
-    in->vex_l = (((payload == 1u ? first : second) & 0x04u) != 0);
-    // The W bit widens the operands exactly the way REX.W does, and it sits in bit
-    // seven of the second byte of VEX3 and EVEX. VEX2 carries no W bit at all.
-    in->vex_w = (payload > 1u) && ((second & 0x80u) != 0);
-    if (payload == 1u) {
-        // VEX2 carries no map field at all: what it carries is pp, the prefix the
-        // encoding implies, and the map is always 0F. Reading pp as the map sent
-        // every F2 and F3 form into the 0F38 and 0F3A maps, where the 0F3A rule
-        // added an immediate the instruction does not have.
-        in->vex_pp = (uint8_t)(first & 3u);
+// VEX2, VEX3 and EVEX, which stand in for the escape bytes and the REX byte. The
+// register extension bits are stored inverted in all three, and are complemented back
+// into a REX byte here so the ModRM decoding below is the same for every encoding.
+static bool x64_vex(const uint8_t *b, size_t *i, uint8_t esc, x64_insn_t *in) {
+    uint8_t p0 = b[(*i)++];
+    uint8_t p1 = 0;
+    uint8_t p2 = 0;
+    unsigned r, x, bb, w = 0;
+    if (esc == 0xC5) {
+        r = !(p0 & 0x80u);
+        x = 0;
+        bb = 0;
+        in->vex_vvvv = (uint8_t)((~p0 >> 3) & 15u);
+        in->vex_l = (p0 & 4u) != 0;
+        in->vex_pp = (uint8_t)(p0 & 3u);
         in->map = 1;
     } else {
-        in->map = (uint8_t)(first & (payload == 3u ? 0x07u : 0x1Fu));
-        in->vex_pp = (uint8_t)(second & 3u);
+        p1 = b[(*i)++];
+        r = !(p0 & 0x80u);
+        x = !(p0 & 0x40u);
+        bb = !(p0 & 0x20u);
+        w = (p1 >> 7) & 1u;
+        in->vex_vvvv = (uint8_t)((~p1 >> 3) & 15u);
+        in->vex_pp = (uint8_t)(p1 & 3u);
+        if (esc == 0xC4) {
+            in->map = (uint8_t)(p0 & 0x1Fu);
+            in->vex_l = (p1 & 4u) != 0;
+            if (in->map < 1 || in->map > 3)
+                return false;
+        } else {
+            // EVEX: P0 bit 3 is reserved zero, P1 bit 2 is fixed one. Map 4 is the APX
+            // promotion map and 7 is unassigned; neither is an instruction before APX.
+            p2 = b[(*i)++];
+            in->map = (uint8_t)(p0 & 7u);
+            if ((p0 & 0x08u) || !(p1 & 0x04u) || in->map == 0 || in->map == 4 || in->map == 7)
+                return false;
+            in->evex = true;
+            in->ev_z = (p2 & 0x80u) != 0;
+            in->ev_ll = (uint8_t)((p2 >> 5) & 3u);
+            in->ev_b = (p2 & 0x10u) != 0;
+            in->ev_aaa = (uint8_t)(p2 & 7u);
+            in->vex_l = in->ev_ll == 1u;
+            in->vr = (uint8_t)(!(p0 & 0x10u) << 4); // R', bit 4 of the reg operand
+            in->vv = (uint8_t)(!(p2 & 0x08u) << 4); // V', bit 4 of vvvv
+        }
     }
-    in->pfx = in->vex_pp;
-    // 4 is not a map any encoding uses. 5 and 6 are EVEX only, and refusing them
-    // ended the walk on every AVX-512 instruction that used them.
-    if (in->map < 1 || in->map == 4 || (in->map > 6) || (in->map > 3 && payload != 3u))
-        return false;
-    if (!rd8(p, n, i, &in->opcode))
-        return false;
     in->vex = true;
+    in->vex_w = w != 0;
+    in->vv = (uint8_t)(in->vv | in->vex_vvvv);
+    in->pfx = in->vex_pp;
+    in->rex = (uint8_t)(0x40u | (w << 3) | (r << 2) | (x << 1) | bb);
+    in->opcode = b[(*i)++];
     return true;
 }
 
-// The class for a resolved map and opcode, or false when the encoding is not valid
-// in 64-bit mode. The 0F38 and 0F3A maps are all ModRM by construction.
+// The class for a resolved map and opcode, or false when the map has none. The 0F38
+// and FP16 maps are all ModRM by construction, and 0F3A is ModRM plus an imm8.
 static bool x64_class(uint8_t map, uint8_t op, uint8_t *cls) {
-    if (map == 2 || map == 5) {
+    uint8_t c;
+    if (map == 2 || map == 5 || map == 6) {
         *cls = XC_MODRM;
         return true;
     }
-    if (map == 3 || map == 6) {
+    if (map == 3) {
         *cls = XC_MODRM_IB;
         return true;
     }
     if (map > 1)
         return false;
-    uint8_t c = map ? kOp0F[op].cls : kOp1[op].cls;
+    c = map ? kOp0F[op].cls : kOp1[op].cls;
     if (c == XC_BAD)
         return false;
     *cls = c;
     return true;
 }
 
-// mod zero with rm 5 is the RIP relative form in 64-bit mode and a plain absolute
-// address in 32-bit mode. Either way it costs four displacement bytes.
-static bool x64_rip_rel(const uint8_t *p, size_t n, size_t *i, x64_insn_t *in) {
-    uint64_t d = 0;
-    if (!rdn(p, n, i, 4, &d))
-        return false;
-    in->rip_rel = in->addrsize == 8;
-    // Signed, because a reference backwards to an earlier table or string is the
-    // common case and an unsigned displacement would point a gigabyte away.
-    if (in->rip_rel) {
-        in->disp = (int64_t)(int32_t)(uint32_t)d;
-        in->base = RE_REG_RIP;
+static int64_t le_s(const uint8_t *p, unsigned k) {
+    uint64_t v = 0;
+    for (unsigned j = 0; j < k; j++)
+        v |= (uint64_t)p[j] << (8u * j);
+    if (k < 8u) {
+        unsigned sh = 64u - 8u * k;
+        return (int64_t)(v << sh) >> sh;
     }
-    return true;
+    return (int64_t)v;
 }
 
-// The SIB byte, which supplies the scale, the index and sometimes the base. A SIB
-// with no base and mod zero is a pure displacement, which sets *done because that
-// displacement is the whole address and the caller must not add a second one.
-static bool x64_sib(const uint8_t *p, size_t n, size_t *i, x64_insn_t *in, unsigned mod,
-                    uint8_t rex_x, uint8_t rex_b, bool *done) {
-    uint8_t sib;
-    *done = false;
-    if (!rd8(p, n, i, &sib))
-        return false;
-    in->scale = (uint8_t)(1u << ((unsigned)(sib >> 6) & 3u));
-    // Index field 4 means no index at all, unless REX.X says otherwise. Reading
-    // it as esp instead is how an operand ends up naming the same register twice.
-    if (((unsigned)(sib >> 3) & 7u) == 4u && rex_x == 0)
-        in->index = RE_REG_NONE;
-    else
-        in->index = (uint8_t)(((unsigned)(sib >> 3) & 7u) + rex_x);
-    if (mod == 0 && (unsigned)(sib & 7u) == 5u) {
-        uint64_t d = 0;
-        if (!rdn(p, n, i, 4, &d))
-            return false;
-        in->disp = (int64_t)(int32_t)(uint32_t)d;
-        in->base = RE_REG_NONE;
-        *done = true;
-        return true;
-    }
-    in->base = (uint8_t)(((unsigned)(sib & 7u) + rex_b));
-    return true;
-}
-
-// The displacement, whose width the mod field fixes: none, one byte, or four.
-static bool x64_disp(const uint8_t *p, size_t n, size_t *i, x64_insn_t *in, unsigned mod) {
-    uint64_t d = 0;
-    if (mod == 0)
-        return true;
-    if (mod == 1) {
-        if (!rdn(p, n, i, 1, &d))
-            return false;
-        in->disp = (int64_t)(int8_t)(uint8_t)d;
-        return true;
-    }
-    if (!rdn(p, n, i, 4, &d))
-        return false;
-    in->disp = (int64_t)(int32_t)(uint32_t)d;
-    return true;
-}
-
-// ModRM, and the SIB and displacement it drags in. RIP relative addressing is the
-// one case worth flagging, because it is how a 64-bit binary points at its own
-// data. Every register number here is extended by REX.R or REX.B, so a consumer
-// never has to remember to apply the prefix itself.
-static bool x64_modrm(const uint8_t *p, size_t n, size_t *i, x64_insn_t *in) {
-    uint8_t modrm;
-    unsigned mod;
-    unsigned rm;
-    uint8_t rex_r = (uint8_t)((in->rex & 0x04u) ? 8u : 0u);
-    uint8_t rex_x = (uint8_t)((in->rex & 0x02u) ? 8u : 0u);
-    uint8_t rex_b = (uint8_t)((in->rex & 0x01u) ? 8u : 0u);
-    if (!rd8(p, n, i, &modrm))
-        return false;
-    in->modrm = modrm;
-    mod = (unsigned)(modrm >> 6);
-    rm = (unsigned)(modrm & 7u);
+// ModRM, and the SIB and displacement it drags in. Every register number is extended
+// by REX.R, REX.X or REX.B here, so a consumer never applies a prefix itself.
+static void x64_modrm(const uint8_t *b, size_t *i, x64_insn_t *in) {
+    uint8_t m = b[(*i)++];
+    unsigned mod = m >> 6;
+    unsigned rm = m & 7u;
+    unsigned rr = (in->rex & 4u) ? 8u : 0u;
+    unsigned rx = (in->rex & 2u) ? 8u : 0u;
+    unsigned rb = (in->rex & 1u) ? 8u : 0u;
+    in->has_modrm = true;
+    in->modrm = m;
     in->mod = (uint8_t)mod;
-    in->reg = (uint8_t)(((unsigned)(modrm >> 3) & 7u) + rex_r);
-    in->rm = (uint8_t)(rm + rex_b);
-    in->base = RE_REG_NONE;
-    in->index = RE_REG_NONE;
-    in->scale = 1;
+    in->reg = (uint8_t)(((m >> 3) & 7u) + rr);
+    in->rm = (uint8_t)(rm + rb);
+    in->vr = (uint8_t)(in->vr | in->reg);
     in->is_mem = mod != 3u;
-    // The control and debug register moves ignore mod entirely: the byte after the
-    // opcode is the whole operand encoding, and reading a displacement out of it
-    // consumed the first bytes of the next instruction.
-    if (in->cls == XC_MODRM_NOMEM)
-        return true;
-    if (mod == 3)
-        return true;
-    if (mod == 0 && rm == 5)
-        return x64_rip_rel(p, n, i, in);
-    if (rm == 4) {
-        bool done = false;
-        if (!x64_sib(p, n, i, in, mod, rex_x, rex_b, &done))
-            return false;
-        if (done)
-            return true;
+    // The control and debug register moves ignore mod: the byte is the whole operand.
+    if (mod == 3u || in->cls == XC_MODRM_NOMEM) {
+        in->is_mem = mod != 3u && in->cls != XC_MODRM_NOMEM;
+        // EVEX.X is bit 4 of a register r/m operand, the vector registers 16 to 31.
+        in->vm = (uint8_t)(in->rm | ((in->evex && rx) ? 16u : 0u));
+        return;
+    }
+    if (rm == 4u) {
+        uint8_t sib = b[(*i)++];
+        unsigned idx = ((sib >> 3) & 7u) + rx;
+        in->scale = (uint8_t)(1u << (sib >> 6));
+        in->sib_idx = (uint8_t)(idx | (in->vv & 16u));
+        // Index 4 without REX.X is no index at all; a VSIB form reads it as xmm4,
+        // which is why the raw field is kept beside this one.
+        in->index = (idx == 4u) ? RE_REG_NONE : (uint8_t)idx;
+        if ((sib & 7u) == 5u && mod == 0u) {
+            in->base = RE_REG_NONE;
+            in->disp = le_s(b + *i, 4);
+            in->disp_size = 4;
+            *i += 4;
+            return;
+        }
+        in->base = (uint8_t)((sib & 7u) + rb);
+    } else if (mod == 0u && rm == 5u) {
+        // RIP relative in 64-bit addressing; with a 0x67 prefix it is RIP relative too,
+        // through eip, and the address still counts from the end of the instruction.
+        in->base = RE_REG_RIP;
+        in->rip_rel = true;
+        in->disp = le_s(b + *i, 4);
+        in->disp_size = 4;
+        *i += 4;
+        return;
     } else {
         in->base = in->rm;
     }
-    return x64_disp(p, n, i, in, mod);
+    if (mod == 1u) {
+        in->disp = le_s(b + *i, 1);
+        in->disp_size = 1;
+        *i += 1;
+    } else if (mod == 2u) {
+        in->disp = le_s(b + *i, 4);
+        in->disp_size = 4;
+        *i += 4;
+    }
 }
 
-// Immediate width in bytes. The 0x66 prefix narrows 16 and 32, and REX.W widens
-// only the encodings that have a 64-bit form, which is why XC_IV is separate.
+// Immediate width in bytes. 0x66 narrows 16 and 32 and REX.W widens only the encodings
+// that have a 64-bit form, which is why XC_IV is a class of its own.
 static unsigned x64_imm_bytes(const x64_insn_t *in) {
     bool w = (in->rex & 0x08u) != 0;
-    // 0x66 narrows the immediate to 16 bits. This used to be guessed from the REX
-    // byte, which has nothing to do with it: a 66-prefixed form was read as a
-    // 32-bit one and every instruction after it was decoded from the wrong place.
     bool d = in->opsize == 2;
+    unsigned reg = (in->modrm >> 3) & 7u;
     switch (in->cls) {
         case XC_IB:
         case XC_IBS:
         case XC_MODRM_IB:
         case XC_MODRM_IZB:
         case XC_3DNOW:
+        case XC_REL8:
             return 1;
         case XC_IW:
         case XC_MODRM_IW:
             return 2;
         case XC_PTR:
-            // The absolute moves take a moffs whose width follows the address
-            // size, not the operand size. With a 0x67 override they are four
-            // bytes wide, and reading eight ate the front of the next
-            // instruction in every 32-bit-addressed image region.
-            return (in->addrsize == 4u) ? 4u : 8u;
+            return in->addrsize == 4u ? 4u : 8u;
         case XC_IZ:
         case XC_MODRM_IZ:
             return d ? 2u : 4u;
         case XC_REL32:
-            // A near branch is 32 bits wide in 64-bit mode whatever the prefix
-            // says. Shortening it by the operand size put every target of a
-            // 66-prefixed jump four bytes off.
-            return 4u;
+            return 4u; // a near branch is 32 bits wide in 64-bit mode whatever 0x66 says
         case XC_IV:
             return w ? 8u : (d ? 2u : 4u);
-        case XC_REL8:
-            return 1;
         case XC_IW_IB:
-            return 3;
+            return 2; // the imm8 behind it is read separately into imm2
         case XC_MODRM_F6:
-            return (((unsigned)(in->modrm >> 3) & 7u) <= 1u) ? 1u : 0u;
+            return reg <= 1u ? 1u : 0u;
         case XC_MODRM_F7:
-            return (((unsigned)(in->modrm >> 3) & 7u) <= 1u) ? (d ? 2u : 4u) : 0u;
+            return reg <= 1u ? (d ? 2u : 4u) : 0u;
         default:
             return 0;
     }
@@ -307,166 +280,218 @@ static bool has_modrm(uint8_t cls) {
            cls == XC_MODRM_NOMEM;
 }
 
-static bool is_relative(uint8_t cls) {
-    return cls == XC_REL8 || cls == XC_REL32;
-}
-
-// Group opcodes whose ModRM reg field has no meaning outside a few values. The
-// processor raises an invalid opcode fault on the rest, so decoding one invents an
-// instruction out of the bytes that follow and the walk lands in the middle of the
-// next one. Everything here was previously given the group's length whatever the
-// reg field said, which is exactly the padding bytes in an executable section.
-static bool x64_undef(const x64_insn_t *in) {
-    unsigned reg;
-    if (in->map != 0)
-        return false;
-    reg = ((unsigned)(in->modrm >> 3) & 7u);
+// Reserved one-byte encodings that depend on ModRM; the processor raises #UD.
+static bool x64_undef0(const x64_insn_t *in) {
+    unsigned reg = (in->modrm >> 3) & 7u;
     switch (in->opcode) {
-        case 0x8F: // pop r/m64 is reg 0; the other seven are not encodings
+        case 0x8D: // lea of a register is no address
+            return in->mod == 3u;
+        case 0x8C: // mov from a segment register: six segment registers
+        case 0x8E:
+            return reg > 5u || (in->opcode == 0x8E && reg == 1u); // mov cs is #UD
+        case 0x8F:
             return reg != 0u;
-        // Group 11. Reg 0 is the move; reg 7 is xabort or xbegin, and both have
-        // exactly one encoding, the ModRM byte F8, with the immediate the operand.
-        // Reg 1 to 6 have no meaning at all.
         case 0xC6:
         case 0xC7:
+            // Reg 7 is xabort or xbegin, and both have exactly one encoding, ModRM F8.
             return reg != 0u && (reg != 7u || in->modrm != 0xF8u);
-        case 0xFE: // inc and dec, byte form
+        case 0xFE:
             return reg > 1u;
         case 0xFF:
-            if (reg == 7u)
-                return true; // no encoding at all
-            // The far call and far jump name a memory operand, so mod 3 is
-            // reserved. Reading it as a register form kept two bytes of a branch.
-            if ((reg == 3u || reg == 5u) && in->mod == 3u)
-                return true;
-            return false;
+            return reg == 7u || ((reg == 3u || reg == 5u) && in->mod == 3u);
         default:
             return false;
     }
 }
 
-// A zeroed record, so every field is defined before anything reads it. Leaving
-// one to chance is how a stale stack value decides an instruction's length.
+// EVEX decoration validity: mask, zeroing, broadcast and rounding must match the form.
+static bool x64_evex_ok(const x64_insn_t *in, const x64_form_t *f) {
+    bool rounding = in->ev_b && !in->is_mem;
+    if (in->ev_aaa && !(f->fl & XF_K))
+        return false;
+    // Zeroing is a kind of masking: without a mask register it is #UD.
+    if (in->ev_z && (!(f->fl & XF_Z) || !in->ev_aaa))
+        return false;
+    // L'L of 3 is reserved, except where it is the rounding mode of a register form.
+    if (in->ev_ll == 3u && !(rounding && (f->fl & XF_ER)))
+        return false;
+    if (!in->ev_b)
+        return true;
+    if (in->is_mem)
+        return (f->bc & XB_MASK) != XB_NONE && !(f->fl & XF_T1S);
+    return (f->fl & (XF_ER | XF_SAE)) != 0;
+}
+
+// True when an operand list reads VEX.vvvv: a vector, a general or a mask register.
+static bool uses_vvvv(const char *ops) {
+    for (const char *p = ops; *p; p++)
+        if ((p == ops || p[-1] == ',') && (*p == 'H' || *p == 'B' || *p == 'Y'))
+            return true;
+    return false;
+}
+
+// True when an operand list has a VSIB memory operand, whose index EVEX.V' extends.
+static bool uses_vsib(const char *ops) {
+    for (const char *p = ops; *p; p++)
+        if ((p == ops || p[-1] == ',') && *p == 'X' && p[1] != 'M')
+            return true;
+    return false;
+}
+
+// Register file range checks: mask 0..7, bounds 0..3, VSIB overlap rules.
+static bool regs_ok(const x64_insn_t *in, const char *ops) {
+    for (const char *p = ops; *p; p++) {
+        if (p != ops && p[-1] != ',')
+            continue;
+        if (p[0] == 'K' && (in->vr & 0x18u))
+            return false;
+        if (p[0] == 'Y' && (in->vv & 0x18u))
+            return false;
+        if (p[0] == 'T' && in->mod == 3u && (in->vm & 0x18u))
+            return false;
+        if (p[0] == 'B' && p[1] == 'R' && in->reg > 3u)
+            return false;
+        if (p[0] == 'B' && p[1] == 'E' && in->mod == 3u && in->rm > 3u)
+            return false;
+        if (p[0] == 'X' && p[1] != 'M') {
+            unsigned idx = in->sib_idx & 31u;
+            if ((in->modrm & 7u) != 4u || in->vr == idx || (!in->evex && in->vv == idx) ||
+                (!in->evex && in->vv == in->vr))
+                return false;
+        }
+    }
+    return true;
+}
+
+// The control registers that exist are cr0, cr2, cr3, cr4 and cr8; the debug registers
+// stop at dr7. Naming any other is #UD.
+static bool crdr_ok(const x64_insn_t *in) {
+    unsigned r = in->reg;
+    if (in->map != 1u || in->opcode < 0x20u || in->opcode > 0x23u)
+        return true;
+    if (in->opcode == 0x20u || in->opcode == 0x22u)
+        return r == 0u || r == 2u || r == 3u || r == 4u || r == 8u;
+    return r < 8u;
+}
+
+// Form-table validity: reserved encodings, lock, vvvv unused check, EVEX decorations.
+static bool x64_formal(const x64_insn_t *in) {
+    const x64_form_t *f;
+    bool x87 = in->map == 0 && in->opcode >= 0xD8u && in->opcode <= 0xDFu;
+    bool plain = !in->vex && !in->lock &&
+                 ((in->map == 0 && !x87) || (in->map == 1 && map1_plain(in->opcode)));
+    if (plain)
+        return true;
+    f = x64_form_find(in);
+    if (!f)
+        return false;
+    // 3DNow: the trailing selector must name a real operation.
+    if (in->map == 1 && in->opcode == 0x0Fu && !in->vex && !x64_3dnow_name((uint8_t)in->imm))
+        return false;
+    if (in->lock && (!(f->fl & XF_LOCK) || !in->is_mem))
+        return false;
+    if (!crdr_ok(in) || !regs_ok(in, f->ops))
+        return false;
+    // VEX/EVEX: vvvv must be unused (all ones) when the form has no H/B/Y operand.
+    if (in->vex && !uses_vvvv(f->ops)) {
+        unsigned used = uses_vsib(f->ops) ? 15u : 31u;
+        if (in->vv & used)
+            return false;
+    }
+    return !in->evex || x64_evex_ok(in, f);
+}
+
 static void blank(x64_insn_t *in) {
-    in->cls = XC_BAD;
-    in->modrm = 0;
-    in->has_modrm = false;
-    in->reg = 0;
-    in->rm = 0;
-    in->mod = 0;
+    memset(in, 0, sizeof(*in));
     in->base = RE_REG_NONE;
     in->index = RE_REG_NONE;
     in->scale = 1;
-    in->is_mem = false;
-    in->rex = 0;
-    in->pfx = 0;
-    in->vex_pp = 0;
-    in->vex_vvvv = 0;
-    in->map = 0;
-    in->opcode = 0;
-    in->size = 0;
     in->opsize = 4;
     in->addrsize = 8;
-    in->rip_rel = false;
-    in->vex = false;
-    in->vex_l = false;
-    in->vex_w = false;
-    in->imm = 0;
-    in->disp = 0;
-    in->target = 0;
-    in->mem = 0;
-    in->has_target = false;
-    in->id = 0;
 }
 
-// Resolve the opcode byte to a map, following 0F, 0F38 and 0F3A. Each root reads
-// one more byte, and a vector prefix bypasses this because it names its own map.
-static bool x64_opcode(const uint8_t *p, size_t n, size_t *i, x64_insn_t *in) {
-    uint8_t esc = 0;
-    if (!rd8(p, n, i, &esc))
-        return false;
-    if (esc == 0xC5 || esc == 0xC4 || esc == 0x62)
-        return x64_vex(p, n, i, esc, in);
-    in->opcode = esc;
-    for (;;) {
-        if (in->map == 0 && in->opcode == 0x0F)
-            in->map = 1;
-        else if (in->map == 1 && (in->opcode == 0x38 || in->opcode == 0x3A))
-            in->map = (in->opcode == 0x38) ? 2u : 3u;
-        else
-            return true;
-        if (!rd8(p, n, i, &in->opcode))
+// The opcode, through the escapes or a vector prefix, which names its own map.
+static bool x64_opcode(const uint8_t *b, size_t *i, x64_insn_t *in, bool rex_seen) {
+    uint8_t c = b[(*i)++];
+    in->raw_op0 = c;
+    if (c == 0xC5 || c == 0xC4 || c == 0x62) {
+        // A vector prefix after 66/F2/F3/F0/REX is #UD; a voided REX does not count.
+        (void)rex_seen;
+        if (in->p66 || in->rep || in->lock || in->rex)
             return false;
+        return x64_vex(b, i, c, in);
     }
+    in->opcode = c;
+    if (c != 0x0F)
+        return true;
+    c = b[(*i)++];
+    if (c == 0x38 || c == 0x3A) {
+        in->map = (c == 0x38) ? 2u : 3u;
+        in->opcode = b[(*i)++];
+        return true;
+    }
+    in->map = 1;
+    in->opcode = c;
+    return true;
 }
 
-// Read the immediate and, for a branch, resolve the target from the address the
-// instruction sits at. A negative displacement has to sign extend from its own
-// width or a backwards branch lands above the function instead of inside it.
-static bool x64_finish(const uint8_t *p, size_t n, size_t i, uint64_t addr, x64_insn_t *in) {
-    uint64_t imm = 0;
+// Read the immediates and resolve a branch target from the end of the instruction.
+static void x64_finish(const uint8_t *b, size_t *i, uint64_t addr, x64_insn_t *in) {
     unsigned nb = x64_imm_bytes(in);
-    if (nb && !rdn(p, n, &i, nb, &imm))
-        return false;
     if (nb) {
-        unsigned shift = (nb < 8u) ? (8u * (8u - nb)) : 0u;
-        in->imm = (int64_t)(imm << shift) >> shift;
+        in->imm = le_s(b + *i, nb);
+        in->imm_size = (uint8_t)nb;
+        *i += nb;
     }
-    if (is_relative(in->cls)) {
-        in->target = addr + (uint64_t)i + (uint64_t)in->imm;
+    if (in->cls == XC_IW_IB)
+        in->imm2 = b[(*i)++];
+    if (in->cls == XC_REL8 || in->cls == XC_REL32) {
+        in->target = addr + (uint64_t)*i + (uint64_t)in->imm;
         in->has_target = true;
     }
-    // The RIP relative address is only known once the whole instruction is, since
-    // it counts from the end of the instruction rather than from the displacement.
     if (in->rip_rel)
-        in->mem = addr + (uint64_t)i + (uint64_t)in->disp;
-    in->id = X64_ID(in->map, in->opcode);
-    in->size = (uint8_t)i;
-    return i > 0 && i <= n && i <= RE_MAX_INSN_LEN;
+        in->mem = addr + (uint64_t)*i + (uint64_t)in->disp;
 }
 
 bool x64_decode(const uint8_t *p, size_t n, uint64_t addr, x64_insn_t *out) {
-    x64_insn_t in;
+    uint8_t b[24];
     size_t i = 0;
-    bool osize = false;
+    size_t avail = n < X64_MAX_LEN ? n : X64_MAX_LEN;
     bool asize = false;
+    bool rex_seen = false;
+    x64_insn_t in;
+    if (!p || avail == 0)
+        return false;
+    memcpy(b, p, avail);
+    memset(b + avail, 0, sizeof(b) - avail);
     blank(&in);
-    if (!x64_legacy(p, n, &i, &in, &osize, &asize))
+    if (!x64_prefixes(b, &i, &in, &asize, &rex_seen))
         return false;
-    // 0x66 and 0x67 between the last REX and the opcode are REX bytes that decode
-    // as the prefix they displaced, so they still narrow the sizes.
-    if (in.rex == 0x66) {
-        osize = true;
-        in.pfx = 1;
-    }
-    if (in.rex == 0x67)
-        asize = true;
-    if (!x64_opcode(p, n, &i, &in))
+    in.pfx = in.rep ? in.rep : (in.p66 ? 1u : 0u);
+    if (!x64_opcode(b, &i, &in, rex_seen) || !x64_class(in.map, in.opcode, &in.cls))
         return false;
-    if (!x64_class(in.map, in.opcode, &in.cls))
-        return false;
-    in.opsize = (uint8_t)((in.rex & 0x08u) ? 8u : (osize ? 2u : 4u));
+    in.opsize = (uint8_t)((in.rex & 0x08u) ? 8u : (in.p66 ? 2u : 4u));
     in.addrsize = (uint8_t)(asize ? 4u : 8u);
-    // F2 0F F0 is lddqu, which loads a line and carries no immediate, while 66 0F
-    // F0 is pshufd, which carries one. The class table holds one class per opcode,
-    // so the prefix decides this one.
-    if (in.map == 1 && in.opcode == 0xF0u && (in.pfx == 3u || in.vex_pp == 3u))
+    // F2 0F F0 is lddqu, which carries no immediate where the class table says one.
+    if (in.map == 1 && in.opcode == 0xF0u && in.pfx == 3u)
         in.cls = XC_MODRM;
-    if (has_modrm(in.cls)) {
-        if (!x64_modrm(p, n, &i, &in))
-            return false;
-        in.has_modrm = true;
-    }
-    if (x64_undef(&in))
+    // 66 and F2 0F 78 are the SSE4a extrq and insertq, which carry a field length and
+    // an index as two imm8s where the VMX form beside them carries none.
+    if (in.map == 1 && in.opcode == 0x78u && !in.vex && (in.pfx == 1u || in.pfx == 3u))
+        in.cls = XC_MODRM_IW;
+    if (has_modrm(in.cls))
+        x64_modrm(b, &i, &in);
+    if (in.map == 0 && in.has_modrm && x64_undef0(&in))
         return false;
-    // Push and pop are the documented exception to the 32-bit default: in 64-bit
-    // mode their default operand size is 64, and the 32-bit form needs a mode switch
-    // rather than a prefix. Without this, 50 rendered as "push eax" where it is
-    // "push rax" and 5f as "pop r15d" where it is "pop rdi". The lengths were already
-    // right, which is why only the operand names were wrong.
+    // Push and pop default to a 64-bit operand in long mode.
     if (in.map == 0 && in.opcode >= 0x50u && in.opcode <= 0x5Fu)
-        in.opsize = 8;
-    if (!x64_finish(p, n, i, addr, &in))
+        in.opsize = in.p66 ? 2u : 8u;
+    x64_finish(b, &i, addr, &in);
+    if (i > avail || i > X64_MAX_LEN)
+        return false;
+    in.size = (uint8_t)i;
+    in.id = X64_ID(in.map, in.opcode);
+    if (!x64_formal(&in))
         return false;
     *out = in;
     return true;

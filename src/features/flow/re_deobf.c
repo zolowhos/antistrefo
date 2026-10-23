@@ -181,21 +181,22 @@ static void stackstr_record(re_flow_stat_t *st, uint64_t at, const uint8_t *buf,
 // in order, so a store's immediate always sits behind it in the same block.
 // A run that minted past the bound names nothing, matching the emitter's own
 // refusal to print a temporary it cannot index.
-static void const_table(const re_ir_block_t *blk, int64_t *vals) {
+// The table starts all zero and is put back to all zero after each block, by clearing
+// the ids the block wrote, rather than cleared whole for every block.
+static void const_table(const re_ir_block_t *blk, int64_t *vals, bool set) {
     for (size_t k = 0; k < blk->n_ops; k++) {
         const re_ir_op_t *op = &blk->ops[k];
         if (op->op == RE_OP_CONST && op->out.space == RE_SPACE_CONST &&
             op->out.offset < RE_FLOW_MAX_KEYS)
-            vals[op->out.offset] = op->const_val;
+            vals[op->out.offset] = set ? op->const_val : 0;
     }
 }
 
-static void block_sites(re_ir_func_t *f, re_code_t *c, size_t bi, re_flow_stat_t *st) {
+static void block_sites(re_ir_func_t *f, re_code_t *c, size_t bi, re_flow_stat_t *st,
+                        int64_t *vals) {
     const re_ir_block_t *blk = &f->blocks[bi];
-    int64_t vals[RE_FLOW_MAX_KEYS];
     size_t k = 0;
-    memset(vals, 0, sizeof(vals));
-    const_table(blk, vals);
+    const_table(blk, vals, true);
     while (k < blk->n_ops) {
         re_ir_op_t *op = &blk->ops[k];
         uint8_t buf[RE_STACKSTR_MAX];
@@ -213,14 +214,17 @@ static void block_sites(re_ir_func_t *f, re_code_t *c, size_t bi, re_flow_stat_t
         }
         k++;
     }
+    const_table(blk, vals, false); // nothing above turns an op into or out of a constant
 }
 
 void re_flow_deobf(re_ir_func_t *f, re_code_t *c, re_arena_t *a, re_flow_stat_t *st) {
+    int64_t vals[RE_FLOW_MAX_KEYS];
     if (!f || !st)
         return;
     (void)a;
     if (st->strs_a)
         re_vec_clear(&st->strs);
+    memset(vals, 0, sizeof(vals));
     for (size_t bi = 0; bi < f->n_blocks; bi++)
-        block_sites(f, c, bi, st);
+        block_sites(f, c, bi, st, vals);
 }

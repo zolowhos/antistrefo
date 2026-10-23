@@ -69,7 +69,10 @@ typedef struct {
     uint64_t target; // resolved branch or call destination
     uint64_t mem;    // effective address of a RIP relative memory operand
     uint8_t ops[4];  // architecture specific operand encodings
-    re_str_t text;   // owned by the caller's arena, may be NULL
+    // The encoding itself, so a renderer can recover every detail the record above has
+    // no field for: segment and repeat prefixes, EVEX masks, a second immediate.
+    uint8_t raw[15];
+    re_str_t text; // owned by the caller's arena, may be NULL
 } re_insn_t;
 
 // The opcode identity, readable without an architecture private header. The map

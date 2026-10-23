@@ -285,8 +285,8 @@ static void check_cfg_jtable(void) {
 
 // ---- the emitter, end to end ----
 
-// The decompiler on the fixture: the two paths at 0x...1000 stay two paths,
-// the body lowers, and no transform erases a statement the walk proved. The
+// The decompiler on the fixture: the two paths at 0x...1000 stay two paths, now
+// printed as the arms of one if, and no transform erases a statement the walk proved. The
 // opaque predicate checks live on the hand built IR above, where the answer
 // is knowable; here the assertion is that a real image still decompiles.
 static void check_emit(void) {
@@ -315,8 +315,12 @@ static void check_emit(void) {
     re_strbuf_init(&out, &a);
     RE_CHECK(re_decompile_ok(&d, &f));
     re_decompile_func(&d, &f, NULL, &out);
-    RE_CHECK(out.p && strstr(out.p, "uint64_t sub_"));
-    RE_CHECK(out.p && strstr(out.p, "goto L"));
+    // Both paths survive, as the two arms of one if, and each returns its own value.
+    RE_CHECK(out.p && strstr(out.p, " sub_180001000("));
+    RE_CHECK(out.p && strstr(out.p, "if (rax != 1)"));
+    RE_CHECK(out.p && strstr(out.p, "return 2;"));
+    RE_CHECK(out.p && strstr(out.p, "= 1;"));
+    RE_CHECK(out.p && !strstr(out.p, "goto"));
     re_arena_free(&a);
 }
 

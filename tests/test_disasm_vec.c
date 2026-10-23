@@ -137,6 +137,7 @@ static const char *const kReserved[] = {
     "c6f01300",     // c6 /6
     "c7ce13000000", // c7 /1
     "c7d213000000", // c7 /2
+    "f20f2ec1",     // F2 ucomisd: invalid SIMD encoding
 };
 
 static uint8_t nib(char c) {
@@ -256,7 +257,7 @@ static const char *const kText[][2] = {
     {"0fc7f0", "rdrand eax"},
     {"0fc7f8", "rdseed eax"},
     {"0f0fc09e", "pfadd mm0, mm0"},
-    {"0f0f009e", "pfadd qword ptr [rax], mm0"},
+    {"0f0f009e", "pfadd mm0, qword ptr [rax]"},
     {"0f6fc0", "movq mm0, mm0"},
     {"0f7f00", "movq qword ptr [rax], mm0"},
     {"660f7ec0", "movd eax, xmm0"},
@@ -265,14 +266,14 @@ static const char *const kText[][2] = {
     {"660fc4c003", "pinsrw xmm0, eax, 0x3"},
     {"660fc5c003", "pextrw eax, xmm0, 0x3"},
     {"0fc300", "movnti [rax], eax"},
-    {"d8c1", "fadd st(0), st(1)"},
-    {"dcc9", "fmul st(1), st(0)"},
+    {"d8c1", "fadd st, st(1)"},
+    {"dcc9", "fmul st(1), st"},
     {"d9e0", "fchs"},
-    {"dec1", "faddp st(1), st(0)"},
-    {"dfe0", "fnstsw"},
+    {"dec1", "faddp st(1), st"},
+    {"dfe0", "fnstsw ax"},
     {"d900", "fld dword ptr [rax]"},
     {"dd00", "fld qword ptr [rax]"},
-    {"db28", "fistp qword ptr [rax]"},
+    {"db28", "fld tbyte ptr [rax]"},
     {"db38", "fstp tbyte ptr [rax]"},
     {"da00", "fiadd dword ptr [rax]"},
     {"de18", "ficomp word ptr [rax]"},
@@ -282,8 +283,8 @@ static const char *const kText[][2] = {
     {"dd38", "fnstsw word ptr [rax]"},
     {"c5f877", "vzeroupper"},
     {"c5fc77", "vzeroall"},
-    {"c5f9efc0", "vpxor xmm0, xmm0"},
-    {"c5f892c0", "db"},
+    {"c5f9efc0", "vpxor xmm0, xmm0, xmm0"},
+    {"c5f892c0", "kmovw k0, eax"},
     {"7801", "js 0x140001003"},
     {"0f8801000000", "js 0x140001007"},
     {"99", "cdq"},
@@ -302,15 +303,14 @@ static const char *const kText[][2] = {
     {"f30fbc01", "tzcnt eax, [rcx]"},
     {"f30fbd01", "lzcnt eax, [rcx]"},
     {"0f38f001", "movbe eax, [rcx]"},
-    {"f20f38f001", "crc32 eax, [rcx]"},
+    {"f20f38f001", "crc32 eax, byte ptr [rcx]"},
     {"660f38f601", "adcx eax, [rcx]"},
     {"f30f38f601", "adox eax, [rcx]"},
-    {"0fba300000", "btr [rax], 0x0"},
-    {"0f1c00", "cldemote [rax]"},
-    {"0f1cc0", "db"},
-    {"0f1800", "prefetchnta [rax]"},
-    {"0f18c0", "db"},
-    {"f20f2ec1", "db"},
+    {"0fba300000", "btr dword ptr [rax], 0x0"},
+    {"0f1c00", "cldemote byte ptr [rax]"},
+    {"0f1cc0", "nop eax"},
+    {"0f1800", "prefetchnta byte ptr [rax]"},
+    {"0f18c0", "nop eax"},
 };
 
 // The names a rendering must never carry. Every one of them was a placeholder in an

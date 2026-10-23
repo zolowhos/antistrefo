@@ -84,7 +84,46 @@ static inline bool re_vec_find(const re_vec_t *v, const void *key, re_eq_fn eq, 
     return false;
 }
 
+// Heap backed reserve: uses malloc and free instead of the arena. Old storage is
+// freed on every growth, so a vector that doubles twenty times holds one
+// allocation rather than twenty one. Use this for the few vectors that grow to
+// millions of elements and would otherwise abandon gigabytes in the arena.
+static inline bool re_vec_reserve_heap(re_vec_t *v, size_t want) {
+    if (v->cap >= want)
+        return true;
+    size_t cap = v->cap ? v->cap : 8;
+    while (cap < want)
+        cap *= 2;
+    unsigned char *nb = (unsigned char *)malloc(cap * v->esz);
+    if (!nb)
+        return false;
+    if (v->base && v->len)
+        memcpy(nb, v->base, v->len * v->esz);
+    if (v->base)
+        free(v->base);
+    v->base = nb;
+    v->cap = cap;
+    return true;
+}
+
+static inline void re_vec_free_heap(re_vec_t *v) {
+    if (v->base)
+        free(v->base);
+    v->base = NULL;
+    v->len = 0;
+    v->cap = 0;
+}
+
+static inline bool re_vec_push_heap_(re_vec_t *v, const void *elem, size_t esz) {
+    if (!re_vec_reserve_heap(v, v->len + 1))
+        return false;
+    memcpy(v->base + v->len * v->esz, elem, esz);
+    v->len++;
+    return true;
+}
+
 #define RE_VEC_PUSH(v, a, x) re_vec_push_((v), (a), &(x), sizeof(x))
+#define RE_VEC_PUSH_HEAP(v, x) re_vec_push_heap_((v), &(x), sizeof(x))
 #define RE_VEC_AT(v, T, i) (*(T *)(void *)re_vec_at((v), (i)))
 #define RE_VEC_PTR(v, T, i) ((T *)(void *)re_vec_at((v), (i)))
 #define RE_VEC_LEN(v) ((v)->len)

@@ -335,9 +335,14 @@ static bool lower_pop(re_ir_func_t *f, re_arena_t *a, const re_insn_t *in) {
 bool x64_ld_extend(re_ir_func_t *f, re_arena_t *a, const re_insn_t *in, bool sgn, uint16_t srcw) {
     re_varnode_t val;
     re_ir_op_t o = x64_lower_mk(RE_OP_CAST);
-    if (!x64_ld_read_rm(f, a, in, srcw, &val))
+    // The source is read at its own width and the destination is written at the
+    // operand size. x64_lower_osize answers the source width for these opcodes, so
+    // neither side can come from it: that made movzx eax, byte write a byte.
+    if (!in->is_mem)
+        val = re_ir_vn(RE_SPACE_REG, srcw, in->rm);
+    else if (!x64_ld_read_rm(f, a, in, srcw, &val))
         return false;
-    o.out = x64_lower_reg(in, in->reg);
+    o.out = re_ir_vn(RE_SPACE_REG, in->opsize, in->reg);
     o.in[0] = val;
     o.const_val = srcw;
     if (sgn)
@@ -347,13 +352,28 @@ bool x64_ld_extend(re_ir_func_t *f, re_arena_t *a, const re_insn_t *in, bool sgn
 
 // The accumulator sign extensions: 98 widens the low half of rax into rax and
 // 99 copies the sign of rax into rdx. Both are casts between the two halves.
-static bool lower_acc_extend(re_ir_func_t *f, re_arena_t *a, const re_insn_t *in, bool into_dx) {
+// cbw, cwde and cdqe widen the low half of the accumulator into all of it.
+static bool lower_acc_extend(re_ir_func_t *f, re_arena_t *a, const re_insn_t *in) {
     uint16_t sz = x64_lower_osize(in);
     re_ir_op_t o = x64_lower_mk(RE_OP_CAST);
-    o.out = re_ir_vn(RE_SPACE_REG, sz, into_dx ? 2 : 0);
+    o.out = re_ir_vn(RE_SPACE_REG, sz, 0);
     o.in[0] = re_ir_vn(RE_SPACE_REG, (uint16_t)(sz / 2), 0);
     o.const_val = sz / 2;
     o.extra = RE_CAST_SIGNED;
+    return x64_lower_push(f, a, o);
+}
+
+// cwd, cdq and cqo fill the data register with the accumulator's sign bit: the high
+// half of the double width value a signed division then takes.
+static bool lower_acc_sign(re_ir_func_t *f, re_arena_t *a, const re_insn_t *in) {
+    uint16_t sz = x64_lower_osize(in);
+    re_varnode_t k;
+    if (!x64_lower_imm(f, a, (int64_t)sz * 8 - 1, &k))
+        return false;
+    re_ir_op_t o = x64_lower_mk(RE_OP_INTSAR);
+    o.out = re_ir_vn(RE_SPACE_REG, sz, 2);
+    o.in[0] = re_ir_vn(RE_SPACE_REG, sz, 0);
+    o.in[1] = k;
     return x64_lower_push(f, a, o);
 }
 
@@ -387,10 +407,12 @@ static bool lower2_modrm(re_ir_func_t *f, re_arena_t *a, const re_insn_t *in, un
         return lower_incdec(f, a, in, op < 0x48);
     if (op == 0x86 || op == 0x87)
         return lower_xchg(f, a, in);
+    if (op == 0x63) // movsxd: map zero, not 0F 63, which is packsswb
+        return x64_ld_extend(f, a, in, true, 4);
     if (op == 0x98)
-        return lower_acc_extend(f, a, in, false);
+        return lower_acc_extend(f, a, in);
     if (op == 0x99)
-        return lower_acc_extend(f, a, in, true);
+        return lower_acc_sign(f, a, in);
     if (op == 0x69 || op == 0x6B) {
         re_varnode_t imm, val;
         if (!x64_lower_imm(f, a, in->imm, &imm))
@@ -422,7 +444,7 @@ bool x64_lower2(const re_insn_t *in, re_ir_func_t *f, re_arena_t *a) {
     // The carry forms and the test with an immediate belong to lower3, which
     // also holds the map one tranche; everything below stays here.
     if ((op >= 0x10 && op <= 0x15) || (op >= 0x18 && op <= 0x1D) ||
-        (op >= 0x80 && op <= 0x83 && (in->reg & 7u) <= 3u) ||
+        (op >= 0x80 && op <= 0x83 && ((in->reg & 7u) == 2u || (in->reg & 7u) == 3u)) ||
         ((op == 0xF6 || op == 0xF7) && (in->reg & 7u) == 0u))
         return x64_lower3_map0(in, f, a);
     if (op == 0xCD)
