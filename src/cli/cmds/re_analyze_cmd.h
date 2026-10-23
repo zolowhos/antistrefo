@@ -10,6 +10,9 @@ extern "C" {
 #include "cli/app/re_table.h"
 
 int re_cmd_analyze(re_ctx_t *ctx, const char *path, int argc, char **argv);
+
+// The deep tier, in the foreground, writing "<file>.asdb" beside the binary.
+int re_cmd_deep(re_ctx_t *ctx, const char *path, int argc, char **argv);
 #ifdef __cplusplus
 }
 #endif

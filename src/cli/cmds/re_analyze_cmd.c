@@ -6,6 +6,7 @@
 #include "cli/cmds/re_analyze_cmd.h"
 
 #include "features/analysis/re_analyze.h"
+#include "features/analysis/re_deep.h"
 #include "features/code/re_stack.h"
 #include "utils/json/re_json.h"
 #include "utils/mem/re_vec.h"
@@ -188,5 +189,33 @@ int re_cmd_analyze(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_jw_flush(&w, re_ctx_out(ctx));
     if (!reused)
         re_analysis_close(an);
+    return 0;
+}
+
+int re_cmd_deep(re_ctx_t *ctx, const char *path, int argc, char **argv) {
+    re_analysis_t an;
+    (void)argc;
+    (void)argv;
+    if (!re_analysis_open(&an, ctx->arena, path)) {
+        RE_ERR_SETF(ctx->err, RE_E_NOTBIN, "%s is not a recognized binary", path);
+        return re_err_exit_code(ctx->err->code);
+    }
+    if (!an.has_code || !re_deep_run(&an, NULL)) {
+        re_analysis_close(&an);
+        RE_ERR_SET(ctx->err, RE_E_UNSUPPORTED, "no instruction decoder for this image");
+        return re_err_exit_code(ctx->err->code);
+    }
+    re_jw_t w;
+    re_jw_init(&w, ctx->arena);
+    re_envelope(&w, "deep", an.file.whole, &an.pe);
+    re_jw_kbool(&w, "complete", !an.scan.truncated);
+    re_jw_kbool(&w, "partial", an.scan.partial);
+    re_jw_ku64(&w, "functions", RE_VEC_LEN(&an.scan.funcs));
+    re_jw_ku64(&w, "edges", RE_VEC_LEN(&an.scan.edges));
+    re_jw_ku64(&w, "xrefs", RE_VEC_LEN(&an.xs.fwd));
+    re_jw_ku64(&w, "notes", RE_VEC_LEN(&an.notes));
+    re_jw_obj_end(&w);
+    re_jw_flush(&w, re_ctx_out(ctx));
+    re_analysis_close(&an);
     return 0;
 }

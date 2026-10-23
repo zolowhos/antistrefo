@@ -156,6 +156,7 @@ src/cli/app/main.cpp
     src/cli/screen/re_term.c
     src/cli/screen/re_gui_model.c
     src/cli/screen/re_gui.c
+    src/cli/screen/bg/re_gui_deep.c
     src/cli/screen/re_gui_menu.c
     src/cli/cmds/re_context_cmd.c
     src/cli/cmds/re_ida_cmds.c

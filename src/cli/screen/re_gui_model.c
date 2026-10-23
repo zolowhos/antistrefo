@@ -7,6 +7,7 @@
 
 #include "features/code/re_code.h"
 #include "features/code/re_stack.h"
+#include "features/db/re_db.h"
 #include "features/dec/re_decompile.h"
 #include "utils/mem/re_buf.h"
 #include "utils/text/re_hex.h"
@@ -28,6 +29,17 @@ void re_gui_pseudo_fill(re_gui_pseudo_t *ps, re_arena_t *a, re_analysis_t *an, s
     if (sel >= RE_VEC_LEN(&an->scan.funcs))
         return;
     const re_func_t *f = RE_VEC_PTR(&an->scan.funcs, re_func_t, sel);
+    re_str_t pre;
+    bool pre_ok = false;
+    // The deep tier already decompiled every function into the database, so the pane
+    // reads that text instead of decompiling again. A function without one falls
+    // through to the live decompiler, which is what the entry tier always does.
+    if (an->db && re_db_decomp(an->db, sel, &pre, &pre_ok) && pre_ok && pre.n) {
+        re_strbuf_append(&ps->buf, pre.p, pre.n);
+        re_strbuf_putc(&ps->buf, 0);
+        ps->n = re_pseudo_split(ps->buf.p, ps->line, ps->mark, RE_PSEUDO_MAX);
+        return;
+    }
     re_decomp_t d;
     re_stack_t st;
     memset(&d, 0, sizeof(d));

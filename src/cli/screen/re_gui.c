@@ -12,6 +12,7 @@
 #include "utils/tui/re_layout.h"
 #include "utils/tui/re_screen.h"
 #include "utils/tui/re_ui.h"
+#include "cli/screen/bg/re_gui_priv.h"
 #include "cli/screen/re_draw.h"
 #include "cli/screen/re_focus.h"
 #include "cli/screen/re_gui_menu.h"
@@ -23,58 +24,6 @@
 
 #include <stdio.h>
 #include <string.h>
-
-#define RE_PAGE_COUNT 6u
-
-typedef struct gui gui_t;
-
-typedef struct {
-    gui_t *g;
-    size_t index;
-} page_arg_t;
-
-typedef struct gui {
-    re_analysis_t an;
-    re_term_t term;
-    re_draw_t draw;
-    re_focus_t focus;
-    size_t sel;
-    size_t tab;
-    bool quit;
-    bool want_load;
-    bool want_analyze;
-    bool loaded;
-    bool fana_ready;
-    uint8_t button_zone;
-    uint8_t open_zone;
-    uint8_t tab_zone;
-    uint8_t tabs_drawn;
-    uint8_t row_zone;
-    uint8_t rows_drawn;
-    page_arg_t row_arg[RE_GUI_LIST_ROWS];
-    bool repaint;
-    size_t page_off;
-    size_t page_rows;
-    size_t page_for;
-    size_t page_sel;
-    bool classes_ready;
-    re_vset_t classes;
-    page_arg_t page_arg[RE_PAGE_COUNT];
-    re_ui_t ui;
-    int menu_open;
-    uint8_t menu_zone;
-    uint8_t menu_n;
-    bool syntax;
-    bool color;
-    uint16_t split;
-    re_console_t console;
-    re_arena_t fana;
-    char path[512];
-    const char **body;
-    const uint8_t *body_marks;
-    size_t body_n;
-    uint32_t body_base;
-} gui_t;
 
 static void show_lines(gui_t *g, const char **text, const uint8_t *marks, size_t n, size_t total) {
     if (total && g->page_off >= total)
@@ -214,12 +163,14 @@ static bool load_file(gui_t *g, re_arena_t *a, re_gui_funcs_t *list, re_gui_pseu
     size_t n = 0;
     g->classes_ready = false;
     g->page_off = 0;
+    re_gui_stop_deep(g);
     if (g->fana_ready) {
         re_analysis_close(&g->an);
         g->fana_ready = false;
     }
     re_arena_free(&g->fana);
     re_arena_init(&g->fana, 1u << 23);
+    re_arena_init(&g->deep_arena, 1u << 23);
     if (!re_analysis_open(&g->an, &g->fana, path)) {
         g->loaded = false;
         re_mcp_live_clear_file();
@@ -360,8 +311,10 @@ static bool turn(gui_t *g, re_arena_t *a, re_screen_t *frame, re_gui_funcs_t *li
     if (g->want_analyze) {
         g->want_analyze = false;
         (void)ensure_funcs(g, a, list);
+        re_gui_arm_deep(g);
         g->repaint = true;
     }
+    re_gui_pump_deep(g, a, list);
     if (list->n && g->sel >= list->n)
         g->sel = list->n - 1u;
     if (g->loaded)
@@ -468,6 +421,7 @@ int re_cmd_gui(re_ctx_t *ctx, const char *path, int argc, char **argv) {
             }
         }
     }
+    re_gui_stop_deep(&g);
     re_term_close(&g.term);
     re_mcp_side_stop();
     re_mcp_live_clear_file();

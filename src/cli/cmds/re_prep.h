@@ -12,6 +12,7 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "features/analysis/re_analyze.h"
 #include "features/code/re_code.h"
 #include "features/lib/re_flirt.h"
 #include "features/meta/re_disasm.h"
@@ -33,6 +34,11 @@ bool re_prepare(re_ctx_t *ctx, const char *path, re_file_t *f, re_pe_t *pe, re_c
 // for address math without a decoder, because "no disassembler for x86" is not an
 // answer to a question about the section table.
 bool re_prepare_loose(re_ctx_t *ctx, const char *path, re_file_t *f, re_pe_t *pe, re_code_t *code);
+
+// The analysis of path: the borrowed session when it is this file, the .asdb when one
+// is valid, and a fresh entry tier run otherwise. The caller closes it with
+// re_analysis_close when it is not the session. NULL when path is not a binary.
+re_analysis_t *re_prep_analysis(re_ctx_t *ctx, const char *path, re_arena_t *own);
 
 // The fields every command's JSON object starts with. The schema, the tool name and
 // the arch are what let a caller parse one response without knowing which command

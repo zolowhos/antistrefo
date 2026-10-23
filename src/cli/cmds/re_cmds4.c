@@ -11,6 +11,7 @@
 #include "features/code/re_xref.h"
 #include "features/data/re_regions.h"
 #include "features/data/re_vtable.h"
+#include "features/db/re_db.h"
 #include "features/dec/re_cfg.h"
 #include "features/dec/re_dc_print.h"
 #include "features/dec/re_decompile.h"
@@ -197,6 +198,39 @@ static void write_decomp(re_ctx_t *ctx, re_span_t img, re_pe_t *pe, re_code_t *c
     re_jw_flush(&w, re_ctx_out(ctx));
 }
 
+// A database already holds the decompiled text. True when that text was written out,
+// so the caller does not scan the file again.
+static bool decomp_from_db(re_ctx_t *ctx, const char *path, int argc, char **argv) {
+    char *side = re_db_path(ctx->arena, path);
+    re_file_t probe;
+    re_analysis_t *an;
+    if (!side || re_file_open(side, ctx->arena, &probe) != RE_OK)
+        return false;
+    re_file_close(&probe);
+    an = re_prep_analysis(ctx, path, ctx->arena);
+    const re_func_t *fn = NULL;
+    re_str_t pre;
+    uint64_t at = 0;
+    bool pre_ok = false;
+    long idx;
+    if (!an || !an->db)
+        return false;
+    if (!re_pick_func_at(ctx, &an->scan, &an->pe, re_cmd_positional(argc, argv, 1), &at, &fn))
+        return true;
+    idx = re_func_index_of(&an->scan, fn->va);
+    if (idx < 0 || !re_db_decomp(an->db, (size_t)idx, &pre, &pre_ok) || !pre_ok)
+        return false;
+    re_jw_t w;
+    re_jw_init(&w, ctx->arena);
+    re_envelope(&w, "decompile", an->file.whole, &an->pe);
+    re_jw_khex(&w, "func", fn->va, 16);
+    re_jw_kbool(&w, "ok", true);
+    re_jw_kstr(&w, "text", pre);
+    re_jw_obj_end(&w);
+    re_jw_flush(&w, re_ctx_out(ctx));
+    return true;
+}
+
 int re_cmd_decompile(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     re_file_t f;
     re_pe_t pe;
@@ -212,6 +246,8 @@ int re_cmd_decompile(re_ctx_t *ctx, const char *path, int argc, char **argv) {
     const re_func_t *fn = NULL;
     uint64_t at = 0;
     bool ok;
+    if (decomp_from_db(ctx, path, argc, argv))
+        return re_err_ok(ctx->err) ? 0 : re_err_exit_code(ctx->err->code);
     if (!re_prepare(ctx, path, &f, &pe, &code))
         return re_err_exit_code(ctx->err->code);
     re_func_scan(&code, ctx->arena, &scan);

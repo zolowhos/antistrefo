@@ -58,6 +58,8 @@ static const re_cmd_t kCommands[] = {
      re_cmd_regions, true, false, false},
     {"analyze", "every pass over one file, with per pass timing and what it could not tell",
      "analyze <file>", re_cmd_analyze, true, false, false},
+    {"deep", "the deep tier, written to <file>.asdb for later instant opens", "deep <file>",
+     re_cmd_deep, true, false, true},
     {"cfg", "control flow graph of one function: blocks, terminators, edges", "cfg <file> [addr]",
      re_cmd_cfg, true, false, false},
     {"demangle", "demangle one C++ symbol, no file needed", "demangle <symbol>", re_cmd_demangle,

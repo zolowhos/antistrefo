@@ -52,6 +52,16 @@ static bool prepare(re_ctx_t *ctx, const char *path, re_file_t *f, re_pe_t *pe, 
     return true;
 }
 
+re_analysis_t *re_prep_analysis(re_ctx_t *ctx, const char *path, re_arena_t *own) {
+    re_analysis_t *an;
+    if (ctx->session && re_str_eq_cstr(ctx->session->path, path))
+        return re_analysis_run_all(ctx->session) ? ctx->session : NULL;
+    an = (re_analysis_t *)re_arena_alloc(own, sizeof(*an));
+    if (!an || !re_analysis_open(an, own, path) || !re_analysis_run_all(an))
+        return NULL;
+    return an;
+}
+
 bool re_prepare(re_ctx_t *ctx, const char *path, re_file_t *f, re_pe_t *pe, re_code_t *code) {
     return prepare(ctx, path, f, pe, code, true);
 }
