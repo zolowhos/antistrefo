@@ -9,33 +9,40 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.1.0-blue" alt="version 0.1.0">
+  <img src="https://img.shields.io/badge/version-0.3.0-blue" alt="version 0.3.0">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT licensed">
   <img src="https://img.shields.io/badge/language-C11%20%2B%20C%2B%2B17-blue" alt="C11 and C++17">
-  <img src="https://img.shields.io/badge/tests-47%2C656%20checks-brightgreen" alt="47656 checks">
+  <img src="https://img.shields.io/badge/tests-41%20targets-brightgreen" alt="41 test targets">
 </p>
 
 ---
 
 ## What it is
 
-Antistrefo opens a PE executable or library, runs every analysis pass over one shared
-context, and shows you what it found. It has three faces and they are the same program:
+Antistrefo opens a PE executable or library and shows you what it found. It has three
+faces and they are the same program:
 
 - **A full screen view** in the terminal, with a function list, a disassembly pane and a
-  pseudo-source pane. Clickable, and fully usable from the keyboard.
+  pseudo-source pane. Clickable, and fully usable from the keyboard. Opening a file
+  recovers functions immediately.
 - **Reports** on stdout, as a framed table for a person or JSON for a program.
 - **An MCP server** over stdio, so an assistant can call the same passes as tools.
 
-Because it is one binary and one shared analysis, the answer does not depend on how you
-asked. `funcs` in the view, `antistrefo funcs file.sys`, and the MCP tool named `funcs`
-all read the same recovered function list.
+Analysis has two tiers. The **entry pass** is the fast one: it makes a file usable in
+seconds, with the same caps the reports have always used. The **deep pass** lifts those
+caps, reconciles the exception table, sweeps for functions nothing called, and writes a
+`<file>.asdb` sidecar next to the binary. The next open of that file loads the sidecar
+instead of scanning again, so the view, the CLI and MCP all read the same result.
+
+A result is kept whole. A pass does not drop a function, a string, an edge, or
+decompiled text because it crossed a fixed size.
 
 ## Quick start
 
 ```console
 $ antistrefo                     # opens the view on its welcome screen
-$ antistrefo funcs driver.sys    # one report, JSON on stdout
+$ antistrefo triage driver.sys   # the fast first look
+$ antistrefo deep driver.sys     # the deep tier, written to driver.sys.asdb
 $ antistrefo gui driver.sys      # opens the view straight onto that file
 ```
 
@@ -97,7 +104,8 @@ Every command also works as a plain command, so nothing is locked inside a sessi
 | `vtables <file>` | C++ class tables, named from the image's own RTTI where it has any |
 | `entropy <file>` | Windowed entropy, to locate packed or encrypted regions |
 | `rules <file>` | Capability findings, with the evidence that fired each rule |
-| `analyze <file>` | Every pass, with per pass timing and what it could not tell |
+| `analyze <file>` | Every pass, with per pass timing and what it could not tell. Uses `<file>.asdb` when one matches this file |
+| `deep <file>` | The deep tier, in the foreground, written to `<file>.asdb` |
 | `hexdump <file>` | Raw bytes at a file offset or an rva |
 | `demangle` | Demangle one C++ symbol, no file needed |
 | `mcp` | Run the MCP server over stdio |
@@ -112,6 +120,24 @@ Every command also works as a plain command, so nothing is locked inside a sessi
 | `--offset N` | Skip the first N rows |
 | `--off N`, `--rva N` | Hexdump: start at a file offset or at a relative virtual address |
 | `--len N` | Hexdump: how many bytes |
+
+## The database
+
+`<file>.asdb` sits beside the binary, the way an IDA database sits beside its input.
+It is versioned, keyed to that file by size and SHA-256, and read only through a
+mapped view with every access bounds-checked. A file that has changed, or a database
+that is truncated or from another format version, is refused and the entry pass runs
+instead.
+
+`deep` writes it. The full screen view starts the same pass in the background after
+the entry pass and swaps to the database when the write finishes. `decompile` reads
+the precomputed text when the sidecar is present, and decompiles live when it is not.
+Renames live in the database's user section, or in the `.alt` sidecar when no database
+exists yet.
+
+The deep pass also records what it will not invent: packed or encrypted ranges, a
+flattened dispatcher, a virtualized function, and an API resolved from a hash. Encrypted
+bytes are marked. They are not unpacked.
 
 ## Output
 
@@ -163,8 +189,8 @@ $ cmake --build --preset clang-release
 $ ctest  --preset clang-release
 ```
 
-The gate is mechanical and it is not advisory. Twelve targets, 47,656 checks, and a set
-of rules covering line and function caps, file banners, ASCII-only source, arena-only
+The gate is mechanical and it is not advisory. 41 CTest targets, and a set of rules
+covering line and function caps, file banners, ASCII-only source, arena-only
 allocation, and where output is allowed to be written. Two of those cost real time the
 first time and are written down in `.cursor/rules/`:
 
