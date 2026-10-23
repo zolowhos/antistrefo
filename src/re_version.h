@@ -4,4 +4,4 @@
 // Depends: none. CMake project(VERSION) is parsed from this line.
 #pragma once
 
-#define RE_VERSION "0.3.1"
+#define RE_VERSION "0.3.2"

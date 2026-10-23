@@ -17,13 +17,15 @@ static void deep_worker(void *arg) {
 }
 
 static void deep_status(gui_t *g) {
-    static const char *const kPhase[] = {"classify", "functions", "symbols", "xrefs", "jtables",
-                                         "strings",  "regions",   "flirt",   "names", "score"};
+    static const char *const kPhase[] = {"classify", "functions", "symbols", "xrefs",
+                                         "jtables",  "strings",   "regions", "flirt",
+                                         "names",    "score",     "database"};
     int64_t p = re_atomic_get(&g->deep_ctrl.progress);
     uint8_t ph = re_deep_phase(p);
     char msg[96];
-    if (!g->deep_running || ph >= RE_DEEP_PHASES)
+    if (!g->deep_running || ph >= RE_DEEP_PHASES || ph == g->deep_logged)
         return;
+    g->deep_logged = ph;
     snprintf(msg, sizeof(msg), "deep %u/%u %s", (unsigned)(ph + 1u), (unsigned)RE_DEEP_PHASES,
              ph < sizeof(kPhase) / sizeof(kPhase[0]) ? kPhase[ph] : "working");
     re_console_push(&g->console, msg);
@@ -34,6 +36,7 @@ void re_gui_arm_deep(gui_t *g) {
         return;
     re_atomic_set(&g->deep_ctrl.progress, 0);
     re_atomic_set(&g->deep_ctrl.cancel, 0);
+    g->deep_logged = 0xFFu;
     g->deep_done = false;
     g->deep_running = re_thread_start(&g->deep_thread, deep_worker, g);
 }

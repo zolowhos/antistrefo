@@ -16,7 +16,11 @@ extern "C" {
 
 // Phase and items done, packed for one atomic cell: the phase in the top 8 bits and
 // the item count in the rest. A worker publishes it; the UI reads it.
-#define RE_DEEP_PHASES 10u
+// Phases 0 through RE_DEEP_PHASE_WRITE are work. RE_DEEP_PHASES is the done sentinel,
+// published only after re_deep_run returns. The view joins on that sentinel, so
+// publishing it before the database write freezes the window for the whole write.
+#define RE_DEEP_PHASE_WRITE 10u
+#define RE_DEEP_PHASES 11u
 
 static inline int64_t re_deep_progress(uint8_t phase, uint64_t done) {
     return ((int64_t)phase << 56) | (int64_t)(done & 0x00FFFFFFFFFFFFFFull);

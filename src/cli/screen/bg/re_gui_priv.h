@@ -64,7 +64,8 @@ typedef struct gui {
     re_analysis_t deep_an; // the worker's own context, on deep_arena
     re_arena_t deep_arena;
     bool deep_running;
-    bool deep_done; // the worker finished; swap its database in at a frame boundary
+    bool deep_done;      // the worker finished; swap its database in at a frame boundary
+    uint8_t deep_logged; // last phase printed, 0xFF until the worker publishes one
     char path[512];
     const char **body;
     const uint8_t *body_marks;

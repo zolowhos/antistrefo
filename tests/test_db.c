@@ -213,8 +213,13 @@ int main(void) {
     write_bin(kTwin, img);
     re_arena_init(&a, 1 << 22);
     re_arena_init(&b, 1 << 22);
+    re_deep_ctrl_t ctrl;
     RE_CHECK(re_analysis_open(&live, &a, kBin));
-    RE_CHECK(re_deep_run(&live, NULL));
+    memset(&ctrl, 0, sizeof(ctrl));
+    RE_CHECK(re_deep_run(&live, &ctrl));
+    // The done sentinel is the worker's, after this returns. Publishing it here is
+    // what made the view join, and freeze, for the whole database write.
+    RE_CHECK_EQ_U(re_deep_phase(re_atomic_get(&ctrl.progress)), RE_DEEP_PHASE_WRITE);
     RE_CHECK(live.scan.funcs.len > 0);
     RE_CHECK(re_analysis_open(&loaded, &b, kBin));
     check_funcs(&live, &loaded);

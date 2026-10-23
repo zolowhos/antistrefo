@@ -127,7 +127,7 @@ bool re_deep_run(re_analysis_t *out, re_deep_ctrl_t *ctrl) {
     }
     import_renames(out, &scratch, &user);
     done = !cancelled(ctrl) && !out->scan.truncated;
-    phase(ctrl, RE_DEEP_PHASES);
+    phase(ctrl, RE_DEEP_PHASE_WRITE);
     if (!write_db(out, &scratch, &user, done))
         RE_LOGW("deep pass finished but the database could not be written");
     re_arena_free(&scratch);
