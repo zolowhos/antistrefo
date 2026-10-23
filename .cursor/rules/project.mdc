@@ -5,7 +5,7 @@ alwaysApply: true
 
 # Project
 
-antistrefo is a static-analysis CLI and MCP server. No debugger, no persistent database.
+antistrefo is a static-analysis CLI and MCP server. No debugger. The only persistent store is the per-binary `<binary>.asdb` sidecar written by the deep pass (mapped, versioned, SHA-256 keyed).
 
     antistrefo <command> [args]
     antistrefo mcp

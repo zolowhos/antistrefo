@@ -7,9 +7,13 @@ alwaysApply: true
 
 Build: PE and ELF layout, function detection, stack and jump tables, FLIRT-style identification, disassembly, cross-references, search, Itanium and MSVC demangling, capability rules, and the Tier B C-like emitter.
 
-Skip: type libraries, a Tier A decompiler, a debugger, embedded scripting, plugin loaders, and shared databases. Structs, enums, and C header parse are deferred.
+Skip: type libraries, a Tier A decompiler, a debugger, embedded scripting, plugin loaders, and shared or multi-user databases. Structs, enums, and C header parse are deferred.
+
+Two tiers: the entry pass (capped, seconds) makes a file usable at once; the deep pass (uncapped results, budgeted work) runs in the background and writes the per-binary `.asdb` sidecar. A valid `.asdb` is loaded instead of re-analysing. Hostile input (packing, encryption, obfuscation, lying headers) must never crash, hang, exhaust memory, or invent results: detect and mark what cannot be read.
 
 Tier B is in scope: disassembly, function recovery, CFG and switch tables, stack frames, calling-convention inference, a register-transfer IR, and a C-like emitter that gets control flow, locals, and call names right. Type inference, structure recovery, and full C++ are out of scope. Wrong types are acceptable. Wrong control flow is not.
+
+A result is kept whole. A pass does not drop, truncate, or replace a function, a string, an edge, or decompiled text because it crossed a fixed size. Memory stays proportional to the text that is kept: intermediate copies are released, and the stored result is the full text.
 
 `triage` must stay under 15ms on a 40KB driver. Lead the surface with `antistrefo triage`. Everything else is drill-down.
 

@@ -1,0 +1,12 @@
+---
+description: Never put a personal email in commits, docs, or rules
+alwaysApply: true
+---
+
+# No personal emails
+
+Commits, co-author trailers, docs, and rules use a GitHub noreply address:
+
+`ID+username@users.noreply.github.com`
+
+The ID is the account's numeric GitHub id. Do not read an email out of `git log`, `git config`, or a profile and copy it into a commit. Do not invent or store a personal mailbox for an author.

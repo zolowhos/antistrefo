@@ -12,8 +12,12 @@ drive through MCP. One binary, two modes:
     antistrefo <command> [args]    human / agent / shell usage
     antistrefo mcp                  MCP server over stdio
 
-Static analysis only. No debugger, no decompiler, no persistent database. See
-section 8 for the full scope verdict.
+Static analysis only. No debugger and no Tier A decompiler. The one persistent store
+is a per-binary `.asdb` sidecar (`<binary>.asdb`, like an IDA `.i64`): written
+atomically by the deep pass, versioned, keyed to the source by size and SHA-256, and
+read back only through the file mapping with every access bounds checked. It holds
+analysis results and user edits for that one binary. No shared or multi-user
+database. See section 8 for the full scope verdict.
 
 The C symbol prefix stays `re_` and the macro prefix `RE_`. That is deliberate and
 not a leftover: the prefix is a link-time namespace guard against Capstone and zlib
@@ -232,7 +236,8 @@ build, which is what makes "check the catalog" trustworthy rather than aspiratio
 | **Decompiler, Tier B** | **Build** | a C-like emitter over a stack transfer IR, see section 8.1 |
 | Debugger | Skip | static only |
 | Embedded scripting languages, plugin loader | Skip | the CLI and MCP are the scriptable surface |
-| Shared databases, multi-user merge, undo | Skip | use an in-memory LRU session cache |
+| Per-binary analysis database (`.asdb`) | Build | feature/db: entry pass, deep pass, mapped sidecar |
+| Shared databases, multi-user merge, undo | Skip | one `.asdb` per binary, single writer |
 
 The decompiler substitute for triage is a rich **function summary**: signature guess, callers,
 callees, strings touched, constants, loop and switch counts, suspicious markers.
@@ -249,6 +254,10 @@ target is reachable only in Tier B, and its quality bar is deliberately low:
   emitter that gets control flow, locals and call names right.
 - **Out of scope**: type inference, structure recovery, full C++ support, and anything
     of that kind. Wrong types are acceptable; wrong control flow is not.
+- **A result is kept whole.** A pass does not drop, truncate, or replace a function,
+  a string, an edge, or decompiled text because it crossed a fixed size. Memory stays
+  proportional to the text that is kept: intermediate copies are released, and the
+  stored result is the full text.
   - **The advantage is speed, not quality.** `triage` must stay under 15ms on a 40KB
     driver, where the heavyweight analysers take 30 seconds to 2 minutes. antistrefo
     is the fast deterministic first stage of a pipeline, not the last one.
