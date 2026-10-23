@@ -11,10 +11,13 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 
+#include "features/code/re_limits.h"
 #include "features/meta/re_disasm.h"
 #include "features/pe/re_pe.h"
 #include "utils/mem/re_arena.h"
 #include "utils/mem/re_buf.h"
+
+#define RE_CODE_PAGE 4096u
 
 typedef struct {
     re_span_t img;          // the whole mapped file
@@ -25,6 +28,14 @@ typedef struct {
     uint64_t n_code; // executable bytes, the size of the covered bitmap
     uint64_t *bits;  // one bit per code byte, arena backed
     size_t n_words;
+    re_limits_t lim; // the tier's caps; re_code_init sets the entry tier
+    // Deep tier only, NULL in the entry tier. hostile has one byte per RE_CODE_PAGE of
+    // the code space, nonzero where the bytes are packed or encrypted and must not be
+    // walked. starts has one bit per code byte, set where an instruction was decoded,
+    // so a jump into the middle of one is seen as overlapping code.
+    const uint8_t *hostile;
+    uint64_t n_pages;
+    uint64_t *starts;
 } re_code_t;
 
 // Prepare the map. The image, the parser and the base are written before this
@@ -68,6 +79,17 @@ bool re_code_offset(const re_code_t *c, uint64_t va, uint64_t *off);
 // The executable ranges in section order, for a sweep over the whole code area.
 // Returns false once index is past the last executable section.
 bool re_code_range(const re_code_t *c, uint16_t index, uint64_t *va, uint64_t *len);
+
+// The bit an address has in the covered bitmap: its distance into the concatenated
+// executable space. False outside every executable section.
+bool re_code_index(const re_code_t *c, uint64_t va, uint64_t *idx);
+
+// True when va is on a page the deep tier classified as packed or encrypted.
+bool re_code_hostile(const re_code_t *c, uint64_t va);
+
+// Record, and ask about, a decoded instruction start. Both are no-ops without starts.
+void re_code_set_start(re_code_t *c, uint64_t va);
+bool re_code_is_start(const re_code_t *c, uint64_t va);
 #ifdef __cplusplus
 }
 #endif

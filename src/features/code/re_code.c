@@ -40,6 +40,10 @@ bool re_code_init(re_code_t *c, re_span_t img, const re_pe_t *pe, const re_disas
     c->bits = NULL;
     c->n_words = 0;
     c->n_code = 0;
+    c->lim = re_limits_entry();
+    c->hostile = NULL;
+    c->n_pages = 0;
+    c->starts = NULL;
     if (!dis || !pe->valid)
         return false;
     for (uint16_t i = 0; i < pe->n_sec; i++) {
@@ -131,8 +135,10 @@ bool re_code_insn(const re_code_t *c, uint64_t va, re_insn_t *out) {
 // The bitmap is indexed by the distance from the start of the concatenated
 // executable space, so an address always lands on the same bit whichever section
 // holds it. Summing the sections that come first keeps that mapping stable.
-static bool code_index(const re_code_t *c, uint64_t va, uint64_t *idx) {
+bool re_code_index(const re_code_t *c, uint64_t va, uint64_t *idx) {
     uint64_t acc = 0;
+    if (!c || !c->pe)
+        return false;
     for (uint16_t i = 0; i < c->pe->n_sec; i++) {
         const re_pe_section_t *s = &c->pe->sec[i];
         uint64_t bytes = s->rsize < s->vsize ? s->rsize : s->vsize;
@@ -154,7 +160,7 @@ static bool in_bits(const re_code_t *c, uint64_t idx) {
 
 bool re_code_mark(re_code_t *c, uint64_t va, size_t n) {
     uint64_t idx;
-    if (!code_index(c, va, &idx) || idx + (uint64_t)n > c->n_code)
+    if (!re_code_index(c, va, &idx) || idx + (uint64_t)n > c->n_code)
         return false;
     for (size_t k = 0; k < n; k++) {
         uint64_t b = idx + (uint64_t)k;
@@ -167,7 +173,7 @@ bool re_code_mark(re_code_t *c, uint64_t va, size_t n) {
 // the walk from treating a jump into the middle of a known function as a new one.
 bool re_code_covered(const re_code_t *c, uint64_t va, size_t n) {
     uint64_t idx;
-    if (!code_index(c, va, &idx) || idx + (uint64_t)n > c->n_code)
+    if (!re_code_index(c, va, &idx) || idx + (uint64_t)n > c->n_code)
         return false;
     for (size_t k = 0; k < n; k++) {
         if (!in_bits(c, idx + (uint64_t)k))
@@ -180,7 +186,7 @@ bool re_code_covered(const re_code_t *c, uint64_t va, size_t n) {
 // function already found is reported rather than silently merged.
 bool re_code_overlaps(const re_code_t *c, uint64_t va, size_t n) {
     uint64_t idx;
-    if (!code_index(c, va, &idx) || idx + (uint64_t)n > c->n_code)
+    if (!re_code_index(c, va, &idx) || idx + (uint64_t)n > c->n_code)
         return false;
     for (size_t k = 0; k < n; k++) {
         if (in_bits(c, idx + (uint64_t)k))
@@ -211,4 +217,25 @@ bool re_code_range(const re_code_t *c, uint16_t index, uint64_t *va, uint64_t *l
         return true;
     }
     return false;
+}
+
+bool re_code_hostile(const re_code_t *c, uint64_t va) {
+    uint64_t idx;
+    if (!c->hostile || !re_code_index(c, va, &idx))
+        return false;
+    idx /= RE_CODE_PAGE;
+    return idx < c->n_pages && c->hostile[idx] != 0;
+}
+
+void re_code_set_start(re_code_t *c, uint64_t va) {
+    uint64_t idx;
+    if (c->starts && re_code_index(c, va, &idx) && idx < c->n_code)
+        c->starts[idx >> 6] |= (uint64_t)1 << (idx & 63u);
+}
+
+bool re_code_is_start(const re_code_t *c, uint64_t va) {
+    uint64_t idx;
+    if (!c->starts || !re_code_index(c, va, &idx) || idx >= c->n_code)
+        return false;
+    return (c->starts[idx >> 6] >> (idx & 63u)) & 1u;
 }

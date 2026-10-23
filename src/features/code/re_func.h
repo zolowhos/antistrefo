@@ -32,12 +32,16 @@ extern "C" {
 #define RE_FUNC_UNWIND 0x0400u   // the PE exception table places its bounds
 #define RE_FUNC_JUNK 0x0800u     // the walk skipped bytes that do not decode
 #define RE_FUNC_TRUNC 0x1000u    // the walk stopped at the instruction ceiling
+// Deep tier evidence. Each says the record is less certain than its neighbours.
+#define RE_FUNC_SUSPECT 0x2000u      // the walk stopped at packed or encrypted bytes
+#define RE_FUNC_OBFUSCATED 0x4000u   // a trick recogniser rewrote part of its control flow
+#define RE_FUNC_FLATTENED 0x8000u    // a dispatcher loop drives the body (flattening)
+#define RE_FUNC_GAP 0x10000u         // found by the gap sweep, nothing pointed at it
+#define RE_FUNC_VIRTUALIZED 0x20000u // the entry of a virtualisation stub
 
+// The per-function walk budget of the entry tier, re_limits_t::insns. Kept as a name
+// for passes that bound their own scan of one function the same way.
 #define RE_FUNC_MAX_INSNS 4096u
-
-// Global edge cap across the whole image. Without this, a large game DLL's
-// RIP-relative data refs alone can retain hundreds of MB of edge records.
-#define RE_EDGE_MAX 2000000u
 
 // The evidence tag a seed writes into re_func_t::module. A name inferred from a
 // structure in the image is weaker than a name the image states about itself, and
@@ -80,10 +84,21 @@ typedef struct {
     re_str_t module;    // the library a signature named, empty when unknown
 } re_func_t;
 
+// What the deep tier's extra passes did, zero in the entry tier.
+typedef struct {
+    size_t pdata_walked;   // unwind entries walked that the entry passes had skipped
+    size_t pdata_rejected; // unwind entries refused as implausible
+    size_t gap_found;      // functions the gap sweep added
+    size_t gap_rounds;     // sweep rounds run before nothing new appeared
+    size_t tricks;         // control flow the trick recognisers rewrote
+} re_fscan_stat_t;
+
 typedef struct {
     re_vec_t funcs; // re_func_t
     re_vec_t edges; // re_edge_t, the raw control flow the walk saw
     bool truncated; // stopped early when an arena push failed (OOM)
+    bool partial;   // a cap, a work budget or the memory ceiling stopped part of the walk
+    re_fscan_stat_t stat;
 } re_fscan_t;
 
 // Walk the image. Seeds the entry point and the export table, then follows calls

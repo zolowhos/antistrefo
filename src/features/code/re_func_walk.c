@@ -26,16 +26,49 @@ void re_walk_push(re_arena_t *a, re_vec_t *v, uint64_t x) {
     RE_VEC_PUSH(v, a, x);
 }
 
-static void add_edge(re_arena_t *a, re_vec_t *v, uint64_t from, uint64_t to, uint8_t kind,
-                     bool has_to) {
-    re_edge_t e;
-    if (RE_VEC_LEN(v) >= RE_EDGE_MAX)
+void re_walk_queue(walk_t *w, uint64_t va) {
+    uint64_t idx;
+    uint64_t bit;
+    if (!re_code_index(w->code, va, &idx) || idx >= w->code->n_code)
         return;
+    if (re_code_hostile(w->code, va))
+        return;
+    if (w->queued) {
+        bit = (uint64_t)1 << (idx & 63u);
+        if (w->queued[idx >> 6] & bit)
+            return;
+        w->queued[idx >> 6] |= bit;
+    }
+    re_walk_push(w->a, w->queue, va);
+}
+
+bool re_walk_over_budget(walk_t *w) {
+    uint64_t max = w->code->lim.mem_max;
+    if (max == RE_LIM_NONE || (uint64_t)w->a->total <= max)
+        return false;
+    w->partial = true;
+    return true;
+}
+
+static void add_edge(walk_t *w, uint64_t from, uint64_t to, uint8_t kind, bool has_to) {
+    re_edge_t e;
+    if ((uint64_t)RE_VEC_LEN(w->edges) >= w->code->lim.edges) {
+        w->partial = true;
+        return;
+    }
     e.from = from;
     e.to = to;
     e.kind = kind;
     e.has_to = has_to;
-    RE_VEC_PUSH(v, a, e);
+    RE_VEC_PUSH(w->edges, w->a, e);
+}
+
+// A block worth walking: bytes nobody claimed, or, in the deep tier, claimed bytes
+// where no instruction starts, which is an instruction overlapping another one.
+static bool want_block(const walk_t *w, uint64_t va) {
+    if (!re_code_covered(w->code, va, 1))
+        return true;
+    return w->code->starts && !re_code_is_start(w->code, va);
 }
 
 bool re_walk_looks_like_start(const re_code_t *c, uint64_t va) {
@@ -131,6 +164,7 @@ static uint64_t skip_junk(walk_t *w, uint64_t va, uint64_t bound, uint32_t *junk
             break;
         if (!re_code_in_code(w->code, va + k))
             break;
+        w->decodes++;
         if (re_code_insn(w->code, va + k, &in)) {
             *junk += (uint32_t)k;
             return va + k;
@@ -172,8 +206,7 @@ static void take_edge(walk_t *w, const re_insn_t *in, re_func_t *f) {
     uint64_t target = in->has_target ? in->target : (in->has_mem ? in->mem : 0);
     bool have = in->has_target || in->has_mem;
     if (data_ref(w->code, in))
-        add_edge(w->a, w->edges, in->addr, in->has_mem ? in->mem : (uint64_t)in->imm, RE_EDGE_DATA,
-                 true);
+        add_edge(w, in->addr, in->has_mem ? in->mem : (uint64_t)in->imm, RE_EDGE_DATA, true);
     if (in->is_call)
         kind = RE_EDGE_CALL;
     else if (in->is_branch)
@@ -184,7 +217,7 @@ static void take_edge(walk_t *w, const re_insn_t *in, re_func_t *f) {
         // An unresolved transfer is still a fact about the function: a call
         // through a register cannot be resolved, and an indirect jump is a
         // dispatch. Both are recorded so the report can say so out loud.
-        add_edge(w->a, w->edges, in->addr, 0, kind, false);
+        add_edge(w, in->addr, 0, kind, false);
         f->open_edges++;
         if (in->is_call)
             f->n_calls++;
@@ -196,7 +229,7 @@ static void take_edge(walk_t *w, const re_insn_t *in, re_func_t *f) {
         }
         return;
     }
-    add_edge(w->a, w->edges, in->addr, target, kind, true);
+    add_edge(w, in->addr, target, kind, true);
     if (in->is_call)
         f->n_calls++;
     else
@@ -209,11 +242,15 @@ static void take_edge(walk_t *w, const re_insn_t *in, re_func_t *f) {
         return;
     }
     if (in->is_call || !in->is_conditional) {
-        re_walk_push(w->a, w->queue, target);
+        re_walk_queue(w, target);
         return;
     }
-    if (!re_code_covered(w->code, target, 1))
-        re_walk_push(w->a, other_unwind(w, f, target) ? w->queue : &w->blocks, target);
+    if (want_block(w, target)) {
+        if (other_unwind(w, f, target))
+            re_walk_queue(w, target);
+        else
+            re_walk_push(w->a, &w->blocks, target);
+    }
     // The bytes are claimed and the target is not on a boundary. Inside this
     // function's own body that is a branch into a mis-decoded stretch, which is a
     // decode problem; outside it two records share bytes, which is the overlap
@@ -258,16 +295,78 @@ static void start_func(fnwalk_t *s, walk_t *w, uint64_t start, re_func_t *f) {
 static void enqueue_block(walk_t *w, uint64_t next) {
     // Already-covered fall-through is common on rejoins; pushing it still grows
     // the block list and was a major arena cost on large images.
-    if (!re_code_covered(w->code, next, 1))
+    if (want_block(w, next))
         re_walk_push(w->a, &w->blocks, next);
+}
+
+// Take the instruction's bytes for this function. Covered bytes end the block, except
+// in the deep tier when no instruction starts here: that is an instruction hidden
+// inside another one, and walking it is how an anti-disassembly jump is followed.
+static bool claim_insn(walk_t *w, const re_insn_t *in, re_func_t *f) {
+    if (re_code_covered(w->code, in->addr, in->size)) {
+        if (!w->code->starts || re_code_is_start(w->code, in->addr))
+            return false;
+        f->flags |= RE_FUNC_OBFUSCATED;
+        w->n_tricks++;
+    } else {
+        re_code_mark(w->code, in->addr, in->size);
+    }
+    re_code_set_start(w->code, in->addr);
+    f->n_insns++;
+    return true;
+}
+
+// A transfer the trick recognisers rewrote. A jump that always lands somewhere is a
+// block of this function; a branch that is never taken is not a branch at all.
+static bool flow_trick(walk_t *w, re_func_t *f, const re_insn_t *in) {
+    uint64_t to = 0;
+    int t = w->tricks ? re_trick_step(w, in, &to) : RE_TRICK_NONE;
+    if (t == RE_TRICK_NONE)
+        return false;
+    f->flags |= RE_FUNC_OBFUSCATED;
+    w->n_tricks++;
+    if (t == RE_TRICK_FALL) {
+        enqueue_block(w, in->addr + in->size);
+        return true;
+    }
+    add_edge(w, in->addr, to, RE_EDGE_JUMP, true);
+    f->n_jumps++;
+    if (re_code_in_code(w->code, to) && want_block(w, to))
+        re_walk_push(w->a, &w->blocks, to);
+    return true;
+}
+
+static void flow_insn(walk_t *w, fnwalk_t *s, re_func_t *f, const re_insn_t *in) {
+    uint8_t halt;
+    uint64_t next = in->addr + in->size;
+    if (flow_trick(w, f, in))
+        return;
+    if (in->is_return)
+        f->flags |= RE_FUNC_RET;
+    halt = halt_kind(in);
+    if (halt)
+        s->halt = next;
+    take_edge(w, in, f);
+    // A declared end beats the first ret. The bytes after it belong to this
+    // function until the compiler's end, and stopping here is how a filter
+    // that has its own unwind entry gets merged into the parent.
+    if (s->end && next < s->end && halt != 2u)
+        enqueue_block(w, next);
+    else if (!in->is_return && halt != 2u && !(in->is_branch && !in->is_conditional))
+        enqueue_block(w, next);
 }
 
 static void walk_block(walk_t *w, fnwalk_t *s, re_func_t *f, uint64_t va) {
     re_insn_t in;
     uint32_t frame = 0;
-    uint8_t halt;
     if (s->end && va >= s->end)
         return; // the declared end of this function, not the next one's body
+    if (re_code_hostile(w->code, va)) {
+        s->cut = true; // packed or encrypted bytes decode as noise; never walk them
+        f->flags |= RE_FUNC_SUSPECT;
+        return;
+    }
+    w->decodes++;
     if (!re_code_insn(w->code, va, &in)) {
         uint64_t next = skip_junk(w, va, s->end, &f->junk);
         if (!next) {
@@ -280,10 +379,8 @@ static void walk_block(walk_t *w, fnwalk_t *s, re_func_t *f, uint64_t va) {
         enqueue_block(w, next);
         return;
     }
-    if (re_code_covered(w->code, va, in.size))
+    if (!claim_insn(w, &in, f))
         return;
-    re_code_mark(w->code, va, in.size);
-    f->n_insns++;
     if (va + in.size > s->hi)
         s->hi = va + in.size;
     // The extent so far, so a transfer can tell a branch into this function's own
@@ -293,19 +390,15 @@ static void walk_block(walk_t *w, fnwalk_t *s, re_func_t *f, uint64_t va) {
         f->size = (uint32_t)(s->end - f->va);
     if (f->n_insns <= 12 && f->frame_size == 0 && sub_rsp(&in, &frame))
         f->frame_size = frame;
-    if (in.is_return)
-        f->flags |= RE_FUNC_RET;
-    halt = halt_kind(&in);
-    if (halt)
-        s->halt = va + in.size;
-    take_edge(w, &in, f);
-    // A declared end beats the first ret. The bytes after it belong to this
-    // function until the compiler's end, and stopping here is how a filter
-    // that has its own unwind entry gets merged into the parent.
-    if (s->end && va + in.size < s->end && halt != 2u)
-        enqueue_block(w, va + in.size);
-    else if (!in.is_return && halt != 2u && !(in.is_branch && !in.is_conditional))
-        enqueue_block(w, va + in.size);
+    flow_insn(w, s, f, &in);
+}
+
+// The instruction ceiling, and in the deep tier the decode budget, which also counts
+// the junk skips a body of garbage spends without ever adding an instruction.
+static bool over_limits(const walk_t *w, const re_func_t *f) {
+    if ((uint64_t)f->n_insns >= w->code->lim.insns)
+        return true;
+    return w->decodes >= w->code->lim.decode_budget;
 }
 
 // What the record says once the walk is over: its extent, whether it was cut short,
@@ -316,8 +409,11 @@ static void finish_func(walk_t *w, fnwalk_t *s, re_func_t *f) {
     // pending because they lie past the declared end is the walk having finished
     // the function, and calling that truncation marked three quarters of a system
     // image as cut short.
-    if (f->n_insns >= RE_FUNC_MAX_INSNS && s->cursor < RE_VEC_LEN(&w->blocks))
+    if (s->cursor < RE_VEC_LEN(&w->blocks) && over_limits(w, f)) {
         f->flags |= RE_FUNC_TRUNC;
+        if (w->code->lim.deep)
+            w->partial = true;
+    }
     // A body that is little more than a jump is a thunk: a jump through the
     // import table, or a tail call the compiler left in place.
     if (f->n_insns <= 2 && f->n_jumps >= 1)
@@ -334,7 +430,8 @@ static void finish_func(walk_t *w, fnwalk_t *s, re_func_t *f) {
 void re_walk_func(walk_t *w, uint64_t start, re_func_t *f) {
     fnwalk_t s;
     start_func(&s, w, start, f);
-    while (s.cursor < RE_VEC_LEN(&w->blocks) && f->n_insns < RE_FUNC_MAX_INSNS) {
+    w->decodes = 0;
+    while (s.cursor < RE_VEC_LEN(&w->blocks) && !over_limits(w, f)) {
         uint64_t va = *(const uint64_t *)RE_VEC_PTR(&w->blocks, uint64_t, s.cursor);
         s.cursor++;
         walk_block(w, &s, f, va);

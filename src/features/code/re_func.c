@@ -19,11 +19,13 @@ void re_fscan_init(re_fscan_t *s) {
     re_vec_init(&s->funcs, sizeof(re_func_t));
     re_vec_init(&s->edges, sizeof(re_edge_t));
     s->truncated = false;
+    s->partial = false;
+    memset(&s->stat, 0, sizeof(s->stat));
 }
 
 // Push one recovered function. No count cap: every walked start is kept. Only an
 // arena failure stops the scan, and that is reported as truncated (OOM).
-static bool push_func(walk_t *w, re_func_t *f) {
+bool re_walk_keep(walk_t *w, re_func_t *f) {
     re_func_t copy;
     if (w->truncated)
         return false;
@@ -66,7 +68,7 @@ static void unwind_pass(walk_t *w) {
         // early, so the declared end wins over the walked one.
         if (u->end > u->begin && f.rva + f.size < u->end)
             f.size = u->end - u->begin;
-        push_func(w, &f);
+        re_walk_keep(w, &f);
     }
 }
 
@@ -79,9 +81,9 @@ static void sweep(walk_t *w) {
     uint64_t len = 0;
     for (uint16_t r = 0; re_code_range(w->code, r, &va, &len) && !w->truncated; r++) {
         uint64_t end = va + len;
-        for (uint64_t at = va; at < end && !w->truncated; at++) {
+        for (uint64_t at = va; at < end && !w->truncated && !re_walk_over_budget(w); at++) {
             re_func_t f;
-            if (re_code_covered(w->code, at, 1))
+            if (re_code_covered(w->code, at, 1) || re_code_hostile(w->code, at))
                 continue;
             // A byte test says "sub rsp, 0x28" looks like a prologue. Inside a
             // function the compiler already described, that is a stack adjustment
@@ -96,7 +98,7 @@ static void sweep(walk_t *w) {
             if (f.n_insns == 0)
                 continue;
             f.flags |= RE_FUNC_PROLOGUE;
-            if (!push_func(w, &f))
+            if (!re_walk_keep(w, &f))
                 return;
             at += f.size ? f.size - 1 : 0;
         }
@@ -176,51 +178,93 @@ static void name_seeds(const re_vec_t *seeds, re_fscan_t *out) {
     }
 }
 
+size_t re_walk_drain(walk_t *w, uint32_t flags) {
+    size_t kept = 0;
+    while (w->qcursor < RE_VEC_LEN(w->queue) && !w->truncated && !re_walk_over_budget(w)) {
+        uint64_t start = *(const uint64_t *)RE_VEC_PTR(w->queue, uint64_t, w->qcursor);
+        re_func_t f;
+        w->qcursor++;
+        if (!re_code_in_code(w->code, start) || re_code_covered(w->code, start, 1))
+            continue;
+        re_walk_func(w, start, &f);
+        if (f.n_insns == 0)
+            continue;
+        if (w->entry_rva && f.rva == w->entry_rva)
+            f.flags |= RE_FUNC_ENTRY;
+        f.flags |= flags;
+        if (re_walk_keep(w, &f))
+            kept++;
+    }
+    return kept;
+}
+
+// The deep tier's per-byte state: which instructions start where, and the recogniser
+// table. The queue bitmap is used by both tiers; without it a start that a thousand
+// calls name is queued a thousand times.
+static void walk_setup(walk_t *w, re_code_t *c, re_arena_t *a, re_fscan_t *out, re_vec_t *q) {
+    memset(w, 0, sizeof(*w));
+    w->code = c;
+    w->a = a;
+    w->edges = &out->edges;
+    w->queue = q;
+    w->out = &out->funcs;
+    w->entry_rva = c->pe->entry_rva;
+    re_vec_init(&w->blocks, sizeof(uint64_t));
+    w->queued = (uint64_t *)re_arena_calloc(a, c->n_words ? c->n_words : 1u, sizeof(uint64_t));
+    if (!c->lim.deep)
+        return;
+    if (!c->starts)
+        c->starts = (uint64_t *)re_arena_calloc(a, c->n_words ? c->n_words : 1u, 8u);
+    w->tricks = (re_trick_t *)re_arena_calloc(a, RE_TRICK_SLOTS, sizeof(re_trick_t));
+}
+
+// Everything after the queue: the unwind table (trust scored in the deep tier), the
+// prologue sweep, and in the deep tier the gap sweep, each draining what it queued.
+static void later_passes(walk_t *w, re_fscan_t *out) {
+    if (w->code->lim.deep) {
+        out->stat.pdata_walked = re_fdeep_pdata(w);
+        re_walk_drain(w, 0);
+    } else {
+        unwind_pass(w);
+    }
+    sweep(w);
+    // The entry tier leaves the calls those two passes found unwalked; walking them
+    // would change its answer, which the cache and the tests both pin.
+    if (w->code->lim.deep) {
+        re_walk_drain(w, 0);
+        out->stat.gap_found = re_fdeep_gaps(w);
+    }
+    out->stat.tricks = w->n_tricks;
+    out->stat.pdata_rejected = w->rejected;
+    out->stat.gap_rounds = w->rounds;
+    out->truncated = w->truncated;
+    out->partial = w->partial;
+}
+
 void re_func_scan(re_code_t *c, re_arena_t *a, re_fscan_t *out) {
     re_vec_t queue;
     re_vec_t seeds;
     re_vec_t irp;
     walk_t w;
-    size_t cursor = 0;
     re_fscan_init(out);
     re_vec_init(&queue, sizeof(uint64_t));
     re_vec_init(&seeds, sizeof(re_seed_t));
     re_vec_init(&irp, sizeof(re_seed_t));
-    memset(&w, 0, sizeof(w));
-    w.code = c;
-    w.a = a;
-    w.edges = &out->edges;
-    w.queue = &queue;
-    w.out = &out->funcs;
-    re_vec_init(&w.blocks, sizeof(uint64_t));
+    walk_setup(&w, c, a, out, &queue);
     if (c->pe->entry_rva)
-        re_walk_push(a, &queue, c->base + c->pe->entry_rva);
+        re_walk_queue(&w, c->base + c->pe->entry_rva);
     for (size_t i = 0; i < RE_VEC_LEN(&c->pe->exports); i++) {
         const re_pe_exp_t *e = RE_VEC_PTR(&c->pe->exports, re_pe_exp_t, i);
         if (e->rva)
-            re_walk_push(a, &queue, c->base + e->rva);
+            re_walk_queue(&w, c->base + e->rva);
     }
     // The starts nothing branches to, queued after the ones a reader would expect, so
     // a seed that lands inside a function found the ordinary way is skipped as covered.
     re_seed_collect(c->pe, c, a, &seeds);
     for (size_t i = 0; i < RE_VEC_LEN(&seeds); i++)
-        re_walk_push(a, &queue, RE_VEC_AT(&seeds, re_seed_t, i).va);
-    while (cursor < RE_VEC_LEN(&queue) && !w.truncated) {
-        uint64_t start = *(const uint64_t *)RE_VEC_PTR(&queue, uint64_t, cursor);
-        re_func_t f;
-        cursor++;
-        if (!re_code_in_code(c, start) || re_code_covered(c, start, 1))
-            continue;
-        re_walk_func(&w, start, &f);
-        if (f.n_insns == 0)
-            continue;
-        if (c->pe->entry_rva && f.rva == c->pe->entry_rva)
-            f.flags |= RE_FUNC_ENTRY;
-        push_func(&w, &f);
-    }
-    unwind_pass(&w);
-    sweep(&w);
-    out->truncated = w.truncated;
+        re_walk_queue(&w, RE_VEC_AT(&seeds, re_seed_t, i).va);
+    re_walk_drain(&w, 0);
+    later_passes(&w, out);
     adopt_unwind(c->pe, &out->funcs);
     re_vec_sort(&out->funcs, cmp_va, NULL);
     mark_record_overlaps(out);
