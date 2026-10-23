@@ -220,28 +220,48 @@ static bool is_or_text(const dx_cond_t *c) {
     return false;
 }
 
-static const char *cond_str(dx_fn_t *x, const dx_cond_t *c) {
+static bool write_wrapped(re_strbuf_t *b, bool wrap, char open) {
+    return !wrap || re_strbuf_putc(b, open);
+}
+
+// One walk, one buffer. Copying each child into a new string made a chain of
+// conditions quadratic, which is how a single function committed tens of gigabytes.
+static bool cond_write(re_strbuf_t *b, const dx_cond_t *c) {
     static const char *const kSym[] = {"==", "!=", "<", ">=", "<=", ">"};
-    if (c->kind == DX_C_AND || c->kind == DX_C_OR) {
-        const char *sa = cond_str(x, c->a), *sb = cond_str(x, c->b);
-        bool pa = c->kind == DX_C_AND && is_or_text(c->a);
-        bool pb = c->kind == DX_C_AND && is_or_text(c->b);
-        return dx_text(x->a, DX_P_LOR, 1, "%s%s%s %s %s%s%s", pa ? "(" : "", sa, pa ? ")" : "",
-                       c->kind == DX_C_AND ? "&&" : "||", pb ? "(" : "", sb, pb ? ")" : "")
-            .s;
+    bool pa;
+    bool pb;
+    const char *op;
+    if (!c)
+        return re_strbuf_puts(b, "?");
+    if (c->kind != DX_C_AND && c->kind != DX_C_OR) {
+        if (c->raw)
+            return re_strbuf_puts(b, c->raw);
+        if (!c->l || c->op > DX_GT)
+            return re_strbuf_puts(b, "?");
+        return re_strbuf_puts(b, c->l) && re_strbuf_puts(b, " ") && re_strbuf_puts(b, kSym[c->op]) &&
+               re_strbuf_puts(b, " ") && re_strbuf_puts(b, c->r);
     }
-    if (c->raw)
-        return c->raw;
-    if (!c->l)
+    pa = c->kind == DX_C_AND && c->a && is_or_text(c->a);
+    pb = c->kind == DX_C_AND && c->b && is_or_text(c->b);
+    op = c->kind == DX_C_AND ? " && " : " || ";
+    return write_wrapped(b, pa, '(') && cond_write(b, c->a) && write_wrapped(b, pa, ')') &&
+           re_strbuf_puts(b, op) && write_wrapped(b, pb, '(') && cond_write(b, c->b) &&
+           write_wrapped(b, pb, ')');
+}
+
+static const char *cond_buf(dx_fn_t *x, const dx_cond_t *c) {
+    re_strbuf_t sb;
+    re_strbuf_init(&sb, x->a);
+    if (!cond_write(&sb, c) || !re_strbuf_putc(&sb, 0))
         return "?";
-    return dx_text(x->a, DX_P_REL, 1, "%s %s %s", c->l, kSym[c->op], c->r).s;
+    return sb.p;
 }
 
 const char *dx_cond_text(dx_fn_t *x, const dx_cond_t *c, bool neg) {
     if (!neg)
-        return cond_str(x, c);
+        return cond_buf(x, c);
     dx_cond_t n = not_cond(x, c);
-    return cond_str(x, &n);
+    return cond_buf(x, &n);
 }
 
 dx_val_t dx_flag_value(dx_em_t *e, unsigned cc) {

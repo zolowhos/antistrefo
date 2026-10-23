@@ -14,9 +14,10 @@ dx_val_t dx_text(re_arena_t *a, uint8_t prec, uint8_t w, const char *fmt, ...) {
     dx_val_t v;
     char buf[512];
     va_list ap;
+    int n;
     memset(&v, 0, sizeof(v));
     va_start(ap, fmt);
-    int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+    n = vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
     if (n < 0)
         n = 0;
