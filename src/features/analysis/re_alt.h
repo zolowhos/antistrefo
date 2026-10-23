@@ -18,7 +18,7 @@ extern "C" {
 #include "utils/text/re_str.h"
 
 #define RE_ALT_NAME_MAX 128u
-#define RE_ALT_MAX_ENTS 8192u
+#define RE_ALT_MAX_ENTS (1u << 20)
 
 // One rename: the function's RVA is the stable key; the name is arena-owned text.
 typedef struct {

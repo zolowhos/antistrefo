@@ -125,8 +125,14 @@ bool re_alt_set(re_alt_t *m, uint32_t rva, re_str_t name) {
     }
     if (RE_VEC_LEN(&m->ents) >= RE_ALT_MAX_ENTS)
         return false;
-    RE_VEC_PUSH(&m->ents, m->arena, e);
-    re_vec_sort(&m->ents, cmp_ent, NULL);
+    // An entry past the last one keeps the table sorted, which is how a saved table
+    // loads back, so only an out of order insert pays for the sort.
+    bool tail = RE_VEC_LEN(&m->ents) == 0 ||
+                RE_VEC_PTR(&m->ents, re_alt_ent_t, RE_VEC_LEN(&m->ents) - 1u)->rva < rva;
+    if (!RE_VEC_PUSH(&m->ents, m->arena, e))
+        return false;
+    if (!tail)
+        re_vec_sort(&m->ents, cmp_ent, NULL);
     return true;
 }
 
