@@ -67,6 +67,29 @@ typedef struct {
     bool partial;
 } re_pass_stat_t;
 
+// What the deep tier learned that has no home in the per-pass results: a hostile
+// range, a resolved API hash, a decrypted string, a virtualised or flattened function.
+typedef enum {
+    RE_NOTE_NONE = 0,
+    RE_NOTE_ENCRYPTED,  // va..va+aux is packed or encrypted on disk
+    RE_NOTE_ENTRY,      // the entry point lies in such a range
+    RE_NOTE_API_HASH,   // the constant at va is the hash aux of the export text
+    RE_NOTE_DYN_IMPORT, // the pointer stored at va was resolved at run time as text
+    RE_NOTE_DECRYPTED,  // the routine at aux decrypts the bytes at va to text
+    RE_NOTE_VM,         // the function at va enters a virtual machine, aux handlers
+    RE_NOTE_FLATTENED,  // the function at va is driven by a dispatcher at aux
+    RE_NOTE_PACKER,     // the section named text is a known protector's
+} re_note_kind_t;
+
+typedef struct {
+    uint64_t va;
+    uint64_t aux;
+    uint32_t kind; // re_note_kind_t
+    re_str_t text;
+} re_note_t;
+
+struct re_db_s;
+
 // The shared context. One of these per open file: the file stays mapped, the PE
 // stays parsed, and each pass runs at most once via re_analysis_ensure, so a
 // second command over the same file reads this instead of rediscovering it. Open
@@ -94,6 +117,9 @@ typedef struct re_analysis_s {
     re_score_t score;      // the scoreboard's six ratios and their composite
     size_t named;          // functions a signature named
     re_vec_t passes;       // re_pass_stat_t, one per pass, in run order
+    re_vec_t notes;        // re_note_t, deep tier only, ascending by va then kind
+    struct re_db_s *db;    // the attached .asdb; passes load from it instead of running
+    bool deep;             // results are the deep tier's, from a run or a database
     bool has_pe;
     bool has_code;
     bool ok;

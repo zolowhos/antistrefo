@@ -6,6 +6,7 @@
 #include "features/analysis/re_analyze.h"
 
 #include "features/analysis/re_alt.h"
+#include "features/analysis/re_deep.h"
 #include "features/code/re_func.h"
 #include "features/code/re_seeds.h"
 #include "features/data/re_vtable.h"
@@ -68,7 +69,7 @@ static void run_funcs(re_analysis_t *an, re_arena_t *a, re_pass_stat_t *st) {
     }
     re_func_scan(&an->code, a, &an->scan);
     st->count = RE_VEC_LEN(&an->scan.funcs);
-    st->partial = an->scan.truncated;
+    st->partial = an->scan.truncated || (an->code.lim.deep && an->scan.partial);
     finished(st);
 }
 
@@ -165,7 +166,7 @@ static void run_jtables(re_analysis_t *an, re_arena_t *a, re_pass_stat_t *st) {
 
 static void run_strings(re_analysis_t *an, re_arena_t *a, re_pass_stat_t *st) {
     re_strings_init(&an->strs);
-    re_strings_scan(an->file.whole, 4, 20000, a, &an->strs);
+    re_strings_scan(an->file.whole, 4, re_lim_size(an->code.lim.str_hits), a, &an->strs);
     re_strings_devices(an->file.whole, 1024, a, &an->strs);
     re_strings_pdb(an->file.whole, a, &an->strs);
     st->count = RE_VEC_LEN(&an->strs.hits);
@@ -221,9 +222,8 @@ static void run_score(re_analysis_t *an, re_arena_t *a, re_pass_stat_t *st) {
 }
 
 // The stack pass is the one that cannot be summarised by a single count, because its
-// result is per function. It is measured over a bounded sample so the cost of a
-// 150,000 function image is reported rather than incurred.
-#define RE_STACK_SAMPLE 256u
+// result is per function. The entry tier measures a bounded sample so the cost of a
+// 150,000 function image is reported rather than incurred; the deep tier does them all.
 
 static void run_stack(re_analysis_t *an, re_arena_t *a, re_pass_stat_t *st) {
     size_t n = RE_VEC_LEN(&an->scan.funcs);
@@ -231,7 +231,8 @@ static void run_stack(re_analysis_t *an, re_arena_t *a, re_pass_stat_t *st) {
         st->skip = RE_PASS_SKIP_EMPTY;
         return;
     }
-    size_t take = n < RE_STACK_SAMPLE ? n : RE_STACK_SAMPLE;
+    size_t cap = re_lim_size(an->code.lim.stack_sample);
+    size_t take = n < cap ? n : cap;
     for (size_t i = 0; i < take; i++) {
         re_stack_t s;
         re_stack_analyze(&an->code, RE_VEC_PTR(&an->scan.funcs, re_func_t, i), a, &s);
@@ -274,6 +275,7 @@ void re_analysis_init(re_analysis_t *an, re_arena_t *a) {
     re_vec_init(&an->regions, sizeof(re_region_t));
     re_vec_init(&an->sigs, sizeof(re_sig_t));
     re_vec_init(&an->gosyms, sizeof(re_gosym_t));
+    re_vec_init(&an->notes, sizeof(re_note_t));
     re_strings_init(&an->strs);
 }
 
@@ -348,6 +350,11 @@ bool re_analysis_open(re_analysis_t *an, re_arena_t *a, const char *path) {
     }
     run_pass(an, a, RE_PASS_FORMAT);
     an->ok = true;
+    // A finished deep analysis of this exact file replaces the entry tier outright, so
+    // every later command reads the database instead of scanning again. A missing,
+    // stale or partial database leaves the entry tier in place, unchanged.
+    if (an->has_code)
+        re_deep_attach(an);
     return true;
 }
 
@@ -376,6 +383,10 @@ bool re_analysis_ensure(re_analysis_t *an, re_pass_t last) {
 }
 
 void re_analysis_close(re_analysis_t *an) {
+    if (an->db) {
+        re_db_close(an->db);
+        an->db = NULL;
+    }
     re_file_close(&an->file);
     an->ok = false;
 }
