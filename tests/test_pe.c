@@ -93,6 +93,16 @@ static void check_one_flag_is_enough(void) {
         const re_pe_section_t *s = re_pe_section_at_rva(&pe, TEXT_RVA);
         RE_CHECK(s != NULL);
         RE_CHECK_EQ_STR(re_pe_region_kind(s), "code");
+        // The walk's bitmap must cover what the lookup decodes. An entry point in an
+        // execute-only stub (SteamStub's .bind) was decodable but never marked, so it
+        // was walked again on every call into it and the scan grew without bound.
+        re_code_t code;
+        uint64_t va = pe.image_base + TEXT_RVA;
+        RE_CHECK(re_code_init(&code, re_span(img, sizeof(img)), &pe, re_disasm_find("x86-64"), &a));
+        RE_CHECK(re_code_in_code(&code, va));
+        RE_CHECK(!re_code_covered(&code, va, 1));
+        RE_CHECK(re_code_mark(&code, va, 4));
+        RE_CHECK(re_code_covered(&code, va, 4));
         re_arena_free(&a);
     }
 }

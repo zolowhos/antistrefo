@@ -6,6 +6,16 @@
 
 #include "utils/mem/re_bits.h"
 
+// Either flag on its own is taken as evidence of code. Requiring both is stricter
+// than the format guarantees and it is not safe: a protected image can have
+// MEM_EXECUTE stripped from its .text and wrongly set on .rodata, and a DRM stub
+// such as SteamStub's .bind carries MEM_EXECUTE alone. Lookup, the bitmap and the
+// sweep must all use this one test: a section the lookup decodes but the bitmap does
+// not cover is never marked, so every call into it walks it again from scratch.
+static bool is_code(const re_pe_section_t *s) {
+    return (s->chars & (RE_SEC_EXEC | RE_SEC_CODE)) != 0;
+}
+
 // The bitset is sized by the total executable span rather than by the image, so a
 // file with a large overlay does not pay for the overlay.
 static bool init_bits(re_code_t *c) {
@@ -35,7 +45,7 @@ bool re_code_init(re_code_t *c, re_span_t img, const re_pe_t *pe, const re_disas
     for (uint16_t i = 0; i < pe->n_sec; i++) {
         const re_pe_section_t *s = &pe->sec[i];
         uint64_t bytes = s->rsize < s->vsize ? s->rsize : s->vsize;
-        if ((s->chars & (RE_SEC_EXEC | RE_SEC_CODE)) == (RE_SEC_EXEC | RE_SEC_CODE))
+        if (is_code(s))
             total += bytes;
     }
     c->n_code = total;
@@ -52,12 +62,7 @@ static const re_pe_section_t *find(const re_code_t *c, uint64_t va, uint64_t *ba
         const re_pe_section_t *s = &c->pe->sec[i];
         uint64_t bytes = s->rsize < s->vsize ? s->rsize : s->vsize;
         uint64_t start = c->base + s->vaddr;
-        // Either flag on its own is taken as evidence of code. Requiring both is
-        // stricter than the format guarantees and it is not safe: a protected image
-        // can have MEM_EXECUTE stripped from its .text and wrongly set on .rodata,
-        // and then a test for both misses the code section entirely and finds nothing
-        // at all. One of the two is what a linker sets; the other can be mangled.
-        if ((s->chars & (RE_SEC_EXEC | RE_SEC_CODE)) == 0)
+        if (!is_code(s))
             continue;
         if (va >= start && va - start < bytes) {
             *base = s->vaddr;
@@ -80,7 +85,7 @@ void re_code_window(const re_code_t *c, uint64_t *lo, uint64_t *hi) {
         const re_pe_section_t *s = &c->pe->sec[i];
         uint64_t bytes = s->rsize < s->vsize ? s->rsize : s->vsize;
         uint64_t start;
-        if (bytes == 0 || (s->chars & (RE_SEC_EXEC | RE_SEC_CODE)) == 0)
+        if (bytes == 0 || !is_code(s))
             continue;
         start = c->base + s->vaddr;
         if (!any || start < min)
@@ -132,7 +137,7 @@ static bool code_index(const re_code_t *c, uint64_t va, uint64_t *idx) {
         const re_pe_section_t *s = &c->pe->sec[i];
         uint64_t bytes = s->rsize < s->vsize ? s->rsize : s->vsize;
         uint64_t start = c->base + s->vaddr;
-        if ((s->chars & (RE_SEC_EXEC | RE_SEC_CODE)) != (RE_SEC_EXEC | RE_SEC_CODE))
+        if (!is_code(s))
             continue;
         if (va >= start && va - start < bytes) {
             *idx = acc + (va - start);
@@ -197,7 +202,7 @@ bool re_code_range(const re_code_t *c, uint16_t index, uint64_t *va, uint64_t *l
     for (uint16_t i = 0; i < c->pe->n_sec; i++) {
         const re_pe_section_t *s = &c->pe->sec[i];
         uint64_t bytes = s->rsize < s->vsize ? s->rsize : s->vsize;
-        if ((s->chars & (RE_SEC_EXEC | RE_SEC_CODE)) != (RE_SEC_EXEC | RE_SEC_CODE))
+        if (!is_code(s))
             continue;
         if (seen++ != index)
             continue;
