@@ -44,8 +44,11 @@ void re_rd_fixed_str(re_span_t s, uint64_t off, size_t width, re_span_t *out) {
 #if defined(_WIN32)
 
 static re_err_code_t map_win(const char *path, re_file_t *out) {
-    HANDLE fh = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
-                            FILE_ATTRIBUTE_NORMAL, NULL);
+    // Sharing write and delete lets another process patch an .asdb's user section in
+    // place, or replace it, while this one still has it mapped for reading.
+    HANDLE fh =
+        CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (fh == INVALID_HANDLE_VALUE)
         return RE_E_IO;
     LARGE_INTEGER li;

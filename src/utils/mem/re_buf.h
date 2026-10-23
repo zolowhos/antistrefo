@@ -122,6 +122,24 @@ static inline bool re_rd32_be(re_span_t s, uint64_t off, bool swap, uint32_t *ou
     return true;
 }
 
+// Little-endian stores into a caller buffer that has room, the mirror of re_rd*. A
+// file this project writes is laid out byte by byte with these, never by a struct copy,
+// so padding and host order cannot leak into it.
+static inline void re_wr16(uint8_t *p, uint16_t v) {
+    p[0] = (uint8_t)v;
+    p[1] = (uint8_t)(v >> 8);
+}
+
+static inline void re_wr32(uint8_t *p, uint32_t v) {
+    re_wr16(p, (uint16_t)v);
+    re_wr16(p + 2, (uint16_t)(v >> 16));
+}
+
+static inline void re_wr64(uint8_t *p, uint64_t v) {
+    re_wr32(p, (uint32_t)v);
+    re_wr32(p + 4, (uint32_t)(v >> 32));
+}
+
 // NUL terminated string inside a bounded span, so a missing terminator cannot
 // run off the end. Returns false when no terminator is found before max.
 bool re_rd_cstr(re_span_t s, uint64_t off, uint64_t max, re_span_t *out);

@@ -15,6 +15,7 @@ and the helper will be needed twice or loops over bytes, add it here first.
 |---|---|---|
 | `re_arena_*` | bump allocation, one malloc and one free per command | `re_arena.h` |
 | `re_buf_*` | bounds checked reads over an mmap'd file, the safety boundary | `re_buf.h` |
+| `re_wr16/32/64` | little-endian stores into a sized buffer, for files this project writes | `re_buf.h` |
 | `re_json_*` | the streaming JSON writer, the only sanctioned stdout writer | `re_json.h` |
 | `re_strbuf_*` | growable buffer, `put_u64`, `put_hex64`, `appendf` | `re_strbuf.h` |
 | `re_str_*` | `eq`, `icmp`, `find`, `rfind`, `trim`, `split`, `join` | `re_str.h` |
@@ -57,6 +58,13 @@ and the helper will be needed twice or loops over bytes, add it here first.
 | `re_layout_*` | the reference screen arrangement, expressed as a struct and composed | `re_layout.h` |
 | `re_console_*` | fixed ring of short GUI console lines with scrollback | `re_console.h` |
 | `re_ui_*` | hover and click bindings over screen zones | `re_ui.h` |
+
+## Threads and files
+
+| Util | Gives you | Header |
+|---|---|---|
+| `re_thread_*`, `re_atomic_*` | one worker thread, join, CPU count, a lock free 64-bit cell | `re_thread.h` |
+| `re_fsave_*` | temp file stream, header patch, atomic replace, in-place patch | `re_fsave.h` |
 
 ## Aggregator
 
