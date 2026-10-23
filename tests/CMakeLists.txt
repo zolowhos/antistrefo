@@ -246,6 +246,15 @@ if(MSVC)
 endif()
 add_test(NAME dc_fold COMMAND re_test_dc_fold)
 
+add_executable(re_test_dc_text test_dc_text.c)
+target_link_libraries(re_test_dc_text PRIVATE re_core re_utils re_flags)
+if(MSVC)
+    set_property(TARGET re_test_dc_text
+        PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_definitions(re_test_dc_text PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+add_test(NAME dc_text COMMAND re_test_dc_text)
+
 # The Microsoft x64 force. A kernel import must not be reported as SysV, and a
 # saved rbx must not become a parameter.
 add_executable(re_test_dc_abi test_dc_abi.c)
@@ -325,6 +334,15 @@ if(MSVC)
     target_compile_definitions(re_test_alt PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
 add_test(NAME alt COMMAND re_test_alt)
+
+add_executable(re_test_db test_db.c)
+target_link_libraries(re_test_db PRIVATE re_core re_utils re_flags)
+if(MSVC)
+    set_property(TARGET re_test_db
+        PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_definitions(re_test_db PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+add_test(NAME db COMMAND re_test_db)
 
 # rename command writes .alt and funcs must echo the new display name.
 add_test(NAME alt_rename
