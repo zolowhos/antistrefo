@@ -1,7 +1,7 @@
 {
     "mcpServers": {
         "antistrefo": {
-            "command": "antistrefo",
+            "command": "C:\\Users\\xyz\\Downloads\\antistrefo-v0.3.2-windows-x86_64.exe",
             "args": ["mcp", "--attach", "tcp:127.0.0.1:52565"]
         }
     }
